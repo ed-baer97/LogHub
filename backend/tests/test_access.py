@@ -302,6 +302,35 @@ def test_driver_sees_own_trip_history(client: TestClient, accounts):
     assert all(o["id"] != order["id"] or o["status"] == "open" for o in foreign)
 
 
+def test_admin_analytics_omits_baseline(client: TestClient, accounts):
+    admin = client.get("/api/analytics/summary", headers=_auth(client, "admin@test.kz")).json()
+    assert "empty_km_without_platform" not in admin
+    assert "empty_share_history" not in admin
+    assert admin.get("live_gps") is None
+    full = client.get("/api/analytics/summary", headers=_auth(client, "super@test.kz")).json()
+    assert "empty_km_without_platform" in full
+    assert "empty_share_history" in full
+
+
+def test_admin_reset_password_generates(client: TestClient, accounts):
+    admin_h = _auth(client, "admin@test.kz")
+    created = client.post(
+        "/api/admin/users",
+        headers=admin_h,
+        json={"email": "sender-reset@test.kz", "name": "Reset Me", "role": "sender", "password": "secret"},
+    )
+    assert created.status_code == 200, created.text
+    uid = created.json()["id"]
+    res = client.post(f"/api/admin/users/{uid}/reset-password", headers=admin_h, json={})
+    assert res.status_code == 200, res.text
+    pwd = res.json()["initial_password"]
+    assert pwd and pwd != "demo"
+    listed = client.get("/api/admin/users", headers=admin_h).json()
+    row = next(u for u in listed if u["id"] == uid)
+    assert row.get("initial_password") in (None, "")
+    assert client.post("/api/auth/login", json={"email": "sender-reset@test.kz", "password": pwd}).status_code == 200
+
+
 def test_only_sender_creates_orders(client: TestClient, accounts):
     origin, dest = _points(accounts)
     payload = {"origin_id": origin, "dest_id": dest, "cargo_title": "X", "weight_kg": 100}

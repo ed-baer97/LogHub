@@ -65,14 +65,14 @@ function AppInner() {
             user ? <Navigate to={cabinetOf(user.role)} replace /> : <Landing onOpenLogin={() => setLoginOpen(true)} />
           }
         />
-        <Route path="/sender" element={user?.role === "sender" ? <Sender /> : <Navigate to="/" />} />
+        <Route path="/sender" element={user?.role === "sender" ? <Sender user={user} onUser={setUser} /> : <Navigate to="/" />} />
         <Route
           path="/carrier"
-          element={user?.role === "carrier" ? <Carrier user={user} /> : <Navigate to="/" />}
+          element={user?.role === "carrier" ? <Carrier user={user} onUser={setUser} /> : <Navigate to="/" />}
         />
         <Route
           path="/dispatcher"
-          element={user && isStaff(user.role) ? <Dispatcher /> : <Navigate to="/" />}
+          element={user && isStaff(user.role) ? <Dispatcher user={user} onUser={setUser} /> : <Navigate to="/" />}
         />
         <Route path="/driver" element={user?.role === "driver" ? <Driver user={user} /> : <Navigate to="/" />} />
         <Route

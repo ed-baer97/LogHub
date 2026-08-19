@@ -1,5 +1,5 @@
 import DriverShell from "../components/DriverShell";
-import DriverProfile from "../components/DriverProfile";
+import ProfileForm from "../components/ProfileForm";
 import type { User } from "../types";
 
 export default function DriverProfilePage({
@@ -11,7 +11,13 @@ export default function DriverProfilePage({
 }) {
   return (
     <DriverShell>
-      <DriverProfile user={user} onUser={onUser} />
+      <div className="super-body">
+        <ProfileForm
+          user={user}
+          onUser={onUser}
+          note="Имя, почта, телефон и пароль. Роль и борт здесь не меняются."
+        />
+      </div>
     </DriverShell>
   );
 }

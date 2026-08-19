@@ -176,7 +176,7 @@ class UserUpdate(BaseModel):
 
 
 class PasswordResetIn(BaseModel):
-    password: str = "demo"
+    password: str | None = None
 
 
 class SettlementCreate(BaseModel):

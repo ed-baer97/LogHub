@@ -1,3 +1,4 @@
+import secrets
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,10 @@ def _to_out(user: User, initial: str | None = None) -> UserOut:
     item = UserOut.model_validate(user)
     item.initial_password = initial
     return item
+
+
+def _temp_password() -> str:
+    return secrets.token_urlsafe(9)
 
 
 @router.get("/role-options")
@@ -129,13 +134,14 @@ def unblock_user(user_id: int, db: DbDep, actor: AdminUsersDep):
 
 
 @router.post("/users/{user_id}/reset-password", response_model=UserOut)
-def reset_password(user_id: int, body: PasswordResetIn, db: DbDep, actor: AdminUsersDep):
+def reset_password(user_id: int, db: DbDep, actor: AdminUsersDep, body: PasswordResetIn | None = None):
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
     _manageable(actor, user)
-    user.password_hash = hash_password(body.password)
-    user.password_plain = body.password
+    password = (body.password.strip() if body and body.password else "") or _temp_password()
+    user.password_hash = hash_password(password)
+    user.password_plain = password
     db.commit()
     db.refresh(user)
-    return _to_out(user, body.password)
+    return _to_out(user, password)

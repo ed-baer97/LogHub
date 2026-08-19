@@ -62,6 +62,7 @@ export default function Driver({ user }: { user: User }) {
   const [confirmDone, setConfirmDone] = useState(false);
   const [finished, setFinished] = useState<Order | null>(null);
   const [loadErr, setLoadErr] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
   const watch = useRef<number | null>(null);
   const vehicleRef = useRef<Vehicle | null>(null);
   vehicleRef.current = vehicle;
@@ -282,197 +283,211 @@ export default function Driver({ user }: { user: User }) {
   const stage = trip ? DRIVER_STAGE_RU[trip.status] ?? trip.status : "Свободен";
   const idx = trip ? stepIndex(st === "pickup" ? "loading" : st ?? "assigned") : -1;
 
-  return (
-    <DriverShell>
-      <div className={`driver-ops${st === "transit" ? " transit" : ""}`}>
-        <section className="driver-panel">
-          <div className="driver-topline">
-            <span className={`driver-link${link === "ok" ? " on" : ""}`}>
-              {link === "ok" ? "Связь есть" : "Нет связи, показаны последние данные"}
-            </span>
-            <span className={`driver-geo${geoOn ? " on" : ""}`}>
-              {geoOn ? "Геолокация активна" : "Геолокация отключена"}
-            </span>
+  const tripBody = finished ? (
+    <div className="driver-done">
+      <p className="kicker">Готово</p>
+      <h2 className="display driver-title">Рейс завершён</h2>
+      <p className="driver-code">{tripCode(finished.id)}</p>
+      <p className="fleet-route">
+        {finished.origin_name} → {finished.dest_name}
+      </p>
+      <p className="lede">Доставка завершена. Следующий рейс появится, когда его назначит перевозчик.</p>
+      <button type="button" className="btn driver-cta" onClick={() => setFinished(null)}>
+        Понятно
+      </button>
+    </div>
+  ) : loadErr && !vehicle ? (
+    <div className="driver-idle">
+      <h2 className="display driver-title">Не удалось загрузить рейс</h2>
+      <p className="lede">Проверьте связь и обновите страницу.</p>
+      <button
+        type="button"
+        className="btn driver-cta"
+        onClick={() => {
+          setLoadErr(false);
+          loadFleet().catch((e) => {
+            setLoadErr(true);
+            toast.err(errText(e));
+          });
+        }}
+      >
+        Повторить
+      </button>
+    </div>
+  ) : !vehicle ? (
+    <div className="driver-idle">
+      <h2 className="display driver-title">Нет закреплённого борта</h2>
+      <p className="lede">Перевозчик создаёт борт и назначает вас водителем. Пока действий не требуется.</p>
+    </div>
+  ) : !trip ? (
+    <div className="driver-idle">
+      <h2 className="display driver-title">Нет активного рейса</h2>
+      <p className="lede">Сейчас вам не назначен рейс. Как только перевозчик назначит рейс, он появится здесь.</p>
+      <div className="card">
+        <p className="kicker">Ваш борт</p>
+        <h3>
+          {kindLabel(vehicle.kind)} · {vehicle.plate}
+        </h3>
+        <span className="fleet-badge idle">
+          <i />
+          Свободен
+        </span>
+      </div>
+    </div>
+  ) : (
+    <>
+      <p className="kicker">Рейс {tripCode(trip.id)}</p>
+      <ol className="driver-steps">
+        {STEPS.map((s, i) => (
+          <li key={s.id} className={i < idx ? "done" : i === idx ? "now" : ""}>
+            <i />
+            {s.label}
+          </li>
+        ))}
+      </ol>
+      <span
+        className={`fleet-badge ${st === "assigned" ? "assigned" : st === "transit" ? "transit" : st === "loading" ? "idle" : "loading"}`}
+      >
+        <i />
+        {stage}
+      </span>
+      {st === "transit" ? (
+        <>
+          <h2 className="display driver-title">{trip.dest_name}</h2>
+          <p className="driver-point-label">Пункт назначения</p>
+        </>
+      ) : (
+        <>
+          <h2 className="display driver-title">{trip.origin_name}</h2>
+          <p className="driver-point-label">Пункт погрузки</p>
+          <div className="driver-arrow">↓</div>
+          <h3 className="driver-dest">{trip.dest_name}</h3>
+          <p className="driver-point-label">Пункт доставки</p>
+        </>
+      )}
+
+      {st === "loading" ? (
+        <p className="lede" style={{ marginTop: 16 }}>
+          Погрузка завершена. Маршрут {trip.origin_name} → {trip.dest_name}
+          {trip.distance_km ? ` · ${trip.distance_km.toFixed(0)} км` : ""}.
+        </p>
+      ) : null}
+
+      {st === "transit" && remaining != null ? (
+        <>
+          <div className="driver-live">
+            <div>
+              <b>{trip.dest_name}</b>
+              <span>Пункт назначения</span>
+            </div>
+            <div>
+              <b>{remaining.toFixed(0)} км</b>
+              <span>Осталось</span>
+            </div>
+            {trip.distance_km ? (
+              <div>
+                <b>{trip.distance_km.toFixed(0)} км</b>
+                <span>Весь путь</span>
+              </div>
+            ) : null}
           </div>
-
-          {finished ? (
-            <div className="driver-done">
-              <p className="kicker">Готово</p>
-              <h2 className="display" style={{ fontSize: 36 }}>
-                Рейс завершён
-              </h2>
-              <p className="driver-code">{tripCode(finished.id)}</p>
-              <p className="fleet-route">
-                {finished.origin_name} → {finished.dest_name}
-              </p>
-              <p className="lede">Доставка завершена. Следующий рейс появится, когда его назначит перевозчик.</p>
-              <button type="button" className="btn driver-cta" onClick={() => setFinished(null)}>
-                Понятно
-              </button>
+          <p className="lede" style={{ marginTop: 10 }}>
+            {trip.cargo_title} · {formatKg(trip.weight_kg)}
+          </p>
+        </>
+      ) : (
+        <div className="driver-facts">
+          <div>
+            <span>Груз</span>
+            <b>{trip.cargo_title}</b>
+          </div>
+          <div>
+            <span>Вес</span>
+            <b>{formatKg(trip.weight_kg)}</b>
+          </div>
+          {trip.distance_km ? (
+            <div>
+              <span>Расстояние</span>
+              <b>{trip.distance_km.toFixed(0)} км</b>
             </div>
-          ) : loadErr && !vehicle ? (
-            <div className="driver-idle">
-              <h2 className="display" style={{ fontSize: 32 }}>
-                Не удалось загрузить рейс
-              </h2>
-              <p className="lede">Проверьте связь и обновите страницу.</p>
-              <button
-                type="button"
-                className="btn driver-cta"
-                onClick={() => {
-                  setLoadErr(false);
-                  loadFleet().catch((e) => {
-                    setLoadErr(true);
-                    toast.err(errText(e));
-                  });
-                }}
-              >
-                Повторить
-              </button>
+          ) : null}
+          {trip.created_at ? (
+            <div>
+              <span>Создан</span>
+              <b>{new Date(trip.created_at).toLocaleString("ru-KZ")}</b>
             </div>
-          ) : !vehicle ? (
-            <div className="driver-idle">
-              <h2 className="display" style={{ fontSize: 32 }}>
-                Нет закреплённого борта
-              </h2>
-              <p className="lede">Перевозчик создаёт борт и назначает вас водителем. Пока действий не требуется.</p>
-            </div>
-          ) : !trip ? (
-            <div className="driver-idle">
-              <h2 className="display" style={{ fontSize: 32 }}>
-                Нет активного рейса
-              </h2>
-              <p className="lede">
-                Сейчас вам не назначен рейс. Как только перевозчик назначит рейс, он появится здесь.
-              </p>
-              <div className="card">
-                <p className="kicker">Ваш борт</p>
-                <h3>
-                  {kindLabel(vehicle.kind)} · {vehicle.plate}
-                </h3>
-                <span className="fleet-badge idle">
-                  <i />
-                  Свободен
-                </span>
-              </div>
-            </div>
-          ) : (
-            <>
-              <p className="kicker">Рейс {tripCode(trip.id)}</p>
-              <ol className="driver-steps">
-                {STEPS.map((s, i) => (
-                  <li key={s.id} className={i < idx ? "done" : i === idx ? "now" : ""}>
-                    <i />
-                    {s.label}
-                  </li>
-                ))}
-              </ol>
-              <span className={`fleet-badge ${st === "assigned" ? "assigned" : st === "transit" ? "transit" : st === "loading" ? "idle" : "loading"}`}>
-                <i />
-                {stage}
-              </span>
-              {st === "transit" ? (
-                <>
-                  <h2 className="display driver-title">{trip.dest_name}</h2>
-                  <p className="driver-point-label">Пункт назначения</p>
-                </>
-              ) : (
-                <>
-                  <h2 className="display driver-title">{trip.origin_name}</h2>
-                  <p className="driver-point-label">Пункт погрузки</p>
-                  <div className="driver-arrow">↓</div>
-                  <h3 className="driver-dest">{trip.dest_name}</h3>
-                  <p className="driver-point-label">Пункт доставки</p>
-                </>
-              )}
-
-              {st === "loading" ? (
-                <p className="lede" style={{ marginTop: 16 }}>
-                  Погрузка завершена. Маршрут {trip.origin_name} → {trip.dest_name}
-                  {trip.distance_km ? ` · ${trip.distance_km.toFixed(0)} км` : ""}.
-                </p>
-              ) : null}
-
-              {st === "transit" && remaining != null ? (
-                <>
-                  <div className="driver-live">
-                    <div>
-                      <b>{trip.dest_name}</b>
-                      <span>Пункт назначения</span>
-                    </div>
-                    <div>
-                      <b>{remaining.toFixed(0)} км</b>
-                      <span>Осталось</span>
-                    </div>
-                    {trip.distance_km ? (
-                      <div>
-                        <b>{trip.distance_km.toFixed(0)} км</b>
-                        <span>Весь путь</span>
-                      </div>
-                    ) : null}
-                  </div>
-                  <p className="lede" style={{ marginTop: 10 }}>
-                    {trip.cargo_title} · {formatKg(trip.weight_kg)}
-                  </p>
-                </>
-              ) : (
-                <div className="driver-facts">
-                  <div>
-                    <span>Груз</span>
-                    <b>{trip.cargo_title}</b>
-                  </div>
-                  <div>
-                    <span>Вес</span>
-                    <b>{formatKg(trip.weight_kg)}</b>
-                  </div>
-                  {trip.distance_km ? (
-                    <div>
-                      <span>Расстояние</span>
-                      <b>{trip.distance_km.toFixed(0)} км</b>
-                    </div>
-                  ) : null}
-                  {trip.created_at ? (
-                    <div>
-                      <span>Создан</span>
-                      <b>{new Date(trip.created_at).toLocaleString("ru-KZ")}</b>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-              <div className="card driver-bort-mini">
-                <span className="kicker" style={{ margin: 0 }}>
-                  Ваш борт
-                </span>
-                <strong>
-                  {kindLabel(vehicle.kind)} · {vehicle.plate}
-                </strong>
-              </div>
-
-              {cta ? (
-                <button
-                  type="button"
-                  className={`btn driver-cta${cta.kind === "warn" ? " dust" : ""}`}
-                  disabled={busy}
-                  onClick={cta.run}
-                >
-                  {cta.label}
-                </button>
-              ) : null}
-            </>
-          )}
-        </section>
-
-        <div className="driver-map">
-          <MapView
-            settlements={finished ? [] : maps}
-            vehicles={vehicle && !finished ? [vehicle] : []}
-            routes={finished ? [] : routes}
-            trail={st === "transit" ? trail : []}
-            fitTo={finished ? undefined : fitTo}
-            navPosition="bottom-right"
-          />
+          ) : null}
         </div>
+      )}
+
+      <div className="card driver-bort-mini">
+        <span className="kicker" style={{ margin: 0 }}>
+          Ваш борт
+        </span>
+        <strong>
+          {kindLabel(vehicle.kind)} · {vehicle.plate}
+        </strong>
+      </div>
+
+      {cta ? (
+        <button
+          type="button"
+          className={`btn driver-cta${cta.kind === "warn" ? " dust" : ""}`}
+          disabled={busy}
+          onClick={cta.run}
+        >
+          {cta.label}
+        </button>
+      ) : null}
+    </>
+  );
+
+  return (
+    <DriverShell mapMode>
+      <div className="super-dash driver-stage">
+        <MapView
+          settlements={finished ? [] : maps}
+          vehicles={vehicle && !finished ? [vehicle] : []}
+          routes={finished ? [] : routes}
+          trail={st === "transit" ? trail : []}
+          fitTo={finished ? undefined : fitTo}
+          navPosition="bottom-right"
+        />
+        <button
+          type="button"
+          className={`btn small super-panel-toggle${panelOpen ? " on-panel" : ""}`}
+          onClick={() => setPanelOpen((v) => !v)}
+          aria-expanded={panelOpen}
+        >
+          {panelOpen ? "Скрыть" : "Рейс"}
+        </button>
+        {panelOpen && (
+          <div className="super-hud driver-hud">
+            <aside className="driver-sheet">
+              <div className="driver-topline">
+                <span className={`driver-link${link === "ok" ? " on" : ""}`}>
+                  {link === "ok" ? "Связь есть" : "Нет связи"}
+                </span>
+                <span className={`driver-geo${geoOn ? " on" : ""}`}>
+                  {geoOn ? "Геолокация активна" : "Геолокация отключена"}
+                </span>
+              </div>
+              {tripBody}
+            </aside>
+          </div>
+        )}
+        {!panelOpen && cta ? (
+          <div className="driver-cta-dock">
+            <button
+              type="button"
+              className={`btn driver-cta${cta.kind === "warn" ? " dust" : ""}`}
+              disabled={busy}
+              onClick={cta.run}
+            >
+              {cta.label}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {confirmDone && trip ? (

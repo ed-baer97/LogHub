@@ -4,9 +4,9 @@ export type ToastKind = "ok" | "err";
 type ToastItem = { id: number; kind: ToastKind; text: string };
 
 type ToastApi = {
-  push: (kind: ToastKind, text: string) => void;
-  ok: (text: string) => void;
-  err: (text: string) => void;
+  push: (kind: ToastKind, text: string, ms?: number) => void;
+  ok: (text: string, ms?: number) => void;
+  err: (text: string, ms?: number) => void;
 };
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -14,17 +14,17 @@ const ToastContext = createContext<ToastApi | null>(null);
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
-  const push = useCallback((kind: ToastKind, text: string) => {
+  const push = useCallback((kind: ToastKind, text: string, ms = 4200) => {
     const id = Date.now() + Math.random();
     setItems((prev) => [...prev.slice(-4), { id, kind, text }]);
-    window.setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 4200);
+    window.setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), ms);
   }, []);
 
   const api = useMemo<ToastApi>(
     () => ({
       push,
-      ok: (text) => push("ok", text),
-      err: (text) => push("err", text),
+      ok: (text, ms) => push("ok", text, ms),
+      err: (text, ms) => push("err", text, ms),
     }),
     [push]
   );

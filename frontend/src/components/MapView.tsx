@@ -28,6 +28,14 @@ function mapStyle(theme: Theme): maplibregl.StyleSpecification {
 type RouteLine = { id: string; coords: number[][] };
 export type NetworkDot = { id: string; lon: number; lat: number; tone: "idle" | "order" | "load" | "transit" };
 
+function esc(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export default function MapView({
   settlements,
   vehicles,
@@ -257,12 +265,15 @@ export default function MapView({
       el.title = s.name;
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        const kind = PLACE_KIND_RU[s.kind] ?? s.kind;
         pop
           ?.setLngLat([s.lon, s.lat])
           .setHTML(
-            `<strong>${s.name}</strong><br/>${PLACE_KIND_RU[s.kind] ?? s.kind}` +
-              (s.population ? `<br/>население ${s.population.toLocaleString("ru-KZ")}` : "") +
-              (s.note ? `<br/>${s.note}` : "")
+            `<div class="place-pop">
+              <strong>${esc(s.name)}</strong>
+              <div class="place-pop-row"><span>Тип</span><b>${esc(kind)}</b></div>
+              <div class="place-pop-row"><span>Координаты</span><b>${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}</b></div>
+            </div>`
           )
           .addTo(map);
       });

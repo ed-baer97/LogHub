@@ -3,12 +3,23 @@ import { api, errText, getToken, setSession } from "../api";
 import { useToast } from "./Toast";
 import type { User } from "../types";
 
-export default function DriverProfile({
+const ROLE_RU: Record<User["role"], string> = {
+  sender: "отправитель",
+  carrier: "перевозчик",
+  driver: "водитель",
+  admin: "админ",
+  superadmin: "супер-админ",
+  dispatcher: "админ",
+};
+
+export default function ProfileForm({
   user,
   onUser,
+  note = "Имя, почта, телефон и пароль. Роль здесь не меняется.",
 }: {
   user: User;
   onUser: (user: User) => void;
+  note?: string;
 }) {
   const toast = useToast();
   const [form, setForm] = useState({
@@ -56,13 +67,22 @@ export default function DriverProfile({
   }
 
   return (
-    <div className="driver-profile">
-      <p className="kicker">Профиль</p>
-      <h2 className="display" style={{ fontSize: 32, marginBottom: 8 }}>
-        Настройки
-      </h2>
-      <p className="lede">Имя, почта, телефон и пароль. Роль и борт здесь не меняются.</p>
-      <form className="grid" onSubmit={save}>
+    <div className="analytics-page profile-page">
+      <header className="admin-hero">
+        <h2 className="display">Профиль</h2>
+        <p className="lede">{note}</p>
+      </header>
+      <form className="grid profile-form" onSubmit={save}>
+        <label>
+          Роль
+          <input readOnly value={ROLE_RU[user.role]} />
+        </label>
+        {user.company ? (
+          <label>
+            Компания
+            <input readOnly value={user.company} />
+          </label>
+        ) : null}
         <label>
           Имя
           <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -72,13 +92,19 @@ export default function DriverProfile({
           <input
             required
             type="email"
+            autoComplete="username"
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
           />
         </label>
         <label>
           Телефон
-          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          <input
+            type="tel"
+            autoComplete="tel"
+            value={form.phone}
+            onChange={(e) => setForm({ ...form, phone: e.target.value })}
+          />
         </label>
         <label>
           Текущий пароль
@@ -109,7 +135,7 @@ export default function DriverProfile({
             onChange={(e) => setForm({ ...form, password2: e.target.value })}
           />
         </label>
-        <button className="btn driver-cta" type="submit" disabled={busy}>
+        <button className="btn" type="submit" disabled={busy}>
           Сохранить
         </button>
       </form>

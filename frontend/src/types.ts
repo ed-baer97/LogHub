@@ -94,16 +94,21 @@ export type Analytics = {
   in_transit: number;
   delivered: number;
   loaded_km: number;
-  empty_km_without_platform: number;
+  empty_km_without_platform?: number | null;
   empty_km_with_platform: number;
   empty_km_saved: number;
   fuel_saved_l: number;
   money_saved_kzt: number;
-  empty_share_history: number;
+  empty_share_history?: number | null;
+  live_gps?: number | null;
+  loaded_km_delta?: number | null;
+  empty_km_delta?: number | null;
+  fuel_saved_delta?: number | null;
+  money_saved_delta?: number | null;
   corridors: { from: string; to: string; trips: number; km: number }[];
   assumptions: {
-    diesel_l_per_100km: number;
-    diesel_kzt_per_l: number;
-    empty_share_without: number;
+    diesel_l_per_100km?: number;
+    diesel_kzt_per_l?: number;
+    empty_share_without?: number;
   };
 };

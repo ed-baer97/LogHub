@@ -1,16 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarList, ChartCard, DonutChart, MetricCard, SparkBars, ordersByDay, statusSlices } from "../components/Charts";
 import Empty, { Skeleton } from "../components/Empty";
 import MapView from "../components/MapView";
 import { useToast } from "../components/Toast";
 import { api, errText, streamUrl } from "../api";
 import FleetBoard from "../components/FleetBoard";
+import { FLEET_STATUS_RU, fleetUiStatus, tripForVehicle } from "../lib/fleet";
+import { fmtNum } from "../lib/format";
 import { STATUS_RU } from "../lib/labels";
+import ProfileForm from "../components/ProfileForm";
 import type { MatchHint, Order, Settlement, User, Vehicle } from "../types";
 
-type Tab = "dash" | "feed" | "mine" | "fleet";
+type Tab = "dash" | "feed" | "mine" | "fleet" | "analytics" | "profile";
+
+const CARGO_LABEL: Record<string, string> = {
+  general: "Сборный / продукты",
+  perishable: "Скоропорт (рефрижератор)",
+  construction: "Стройматериалы",
+  fuel: "ГСМ",
+  livestock: "С/х груз",
+};
+
+function ownCorridors(orders: Order[]) {
+  const byPair = new Map<string, { from: string; to: string; trips: number; km: number }>();
+  for (const o of orders.filter((x) => x.status === "delivered" || x.status === "transit")) {
+    const key = `${o.origin_name}|${o.dest_name}`;
+    const slot = byPair.get(key) ?? { from: o.origin_name, to: o.dest_name, trips: 0, km: 0 };
+    slot.trips += 1;
+    slot.km += o.distance_km;
+    byPair.set(key, slot);
+  }
+  return [...byPair.values()].sort((a, b) => b.km - a.km);
+}
 type Info = "open" | "trips" | "fleet" | "live" | "transit";
 
-export default function Carrier({ user }: { user: User }) {
+export default function Carrier({ user, onUser }: { user: User; onUser: (user: User) => void }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("dash");
   const [info, setInfo] = useState<Info | null>(null);
@@ -102,6 +126,8 @@ export default function Carrier({ user }: { user: User }) {
     { id: "feed", label: "Биржа" },
     { id: "mine", label: "Рейсы" },
     { id: "fleet", label: "Парк" },
+    { id: "analytics", label: "Аналитика" },
+    { id: "profile", label: "Профиль" },
   ];
   const mapMode = (tab === "dash" && !info) || tab === "feed" || tab === "mine";
 
@@ -200,6 +226,167 @@ export default function Carrier({ user }: { user: User }) {
           />
         </div>
       )}
+
+      {tab === "analytics" && (
+        <div className="super-body">
+          <CarrierAnalytics trips={myTrips} fleet={mineFleet} loading={loading} />
+        </div>
+      )}
+
+      {tab === "profile" && (
+        <div className="super-body">
+          <ProfileForm
+            user={user}
+            onUser={onUser}
+            note="Имя, почта, телефон и пароль. Парк и рейсы здесь не меняются."
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CarrierAnalytics({
+  trips,
+  fleet,
+  loading,
+}: {
+  trips: Order[];
+  fleet: Vehicle[];
+  loading: boolean;
+}) {
+  const delivered = trips.filter((o) => o.status === "delivered");
+  const work = trips.filter((o) => ["taken", "assigned", "arrived", "loading", "pickup"].includes(o.status)).length;
+  const transit = trips.filter((o) => o.status === "transit").length;
+  const backhaul = trips.filter((o) => o.is_backhaul).length;
+  const loadedKm = delivered.reduce((s, o) => s + o.distance_km, 0);
+  const savedKm = trips.reduce((s, o) => s + (o.empty_km_saved || 0), 0);
+  const earned = delivered.reduce((s, o) => s + o.price_offered, 0);
+  const live = fleet.filter((v) => v.live).length;
+  const idle = fleet.filter((v) => v.active !== false && !v.current_order_id).length;
+  const busy = fleet.filter((v) => v.current_order_id).length;
+  const slices = useMemo(() => statusSlices(trips), [trips]);
+  const days = useMemo(() => ordersByDay(trips), [trips]);
+  const corridors = useMemo(() => ownCorridors(trips), [trips]);
+  const cargoBars = useMemo(() => {
+    const by = new Map<string, number>();
+    for (const o of trips) {
+      const key = CARGO_LABEL[o.cargo_type] ?? o.cargo_type;
+      by.set(key, (by.get(key) ?? 0) + 1);
+    }
+    return [...by.entries()].map(([label, value]) => ({ label, value, tone: "sea" as const }));
+  }, [trips]);
+  const fleetSlices = useMemo(() => {
+    const by: Record<string, number> = {};
+    for (const v of fleet) {
+      const st = fleetUiStatus(v, tripForVehicle(v, trips));
+      by[st] = (by[st] ?? 0) + 1;
+    }
+    return (Object.keys(FLEET_STATUS_RU) as (keyof typeof FLEET_STATUS_RU)[])
+      .map((id) => ({
+        label: FLEET_STATUS_RU[id],
+        tone: id === "inactive" ? "muted" : id === "transit" ? "deep" : id === "idle" ? "sea" : "dust",
+        value: by[id] ?? 0,
+      }))
+      .filter((s) => s.value > 0);
+  }, [fleet, trips]);
+  const plateBars = useMemo(() => {
+    const by = new Map<string, number>();
+    for (const o of trips.filter((x) => x.status === "delivered" || x.status === "transit")) {
+      const key = o.plate ?? "без борта";
+      by.set(key, (by.get(key) ?? 0) + o.distance_km);
+    }
+    return [...by.entries()]
+      .map(([label, value]) => ({ label, value, tone: "sea" as const }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [trips]);
+
+  if (loading && trips.length === 0 && fleet.length === 0) return <Skeleton rows={4} />;
+  if (trips.length === 0 && fleet.length === 0) {
+    return (
+      <div className="analytics-page">
+        <header className="admin-hero">
+          <h2 className="display">Аналитика</h2>
+          <p className="lede">Рейсы вашего парка внутри Мангистауской области.</p>
+        </header>
+        <Empty title="Пока нет рейсов" hint="Возьмите заявку с биржи — графики появятся после первых перевозок." />
+      </div>
+    );
+  }
+
+  return (
+    <div className="analytics-page">
+      <header className="admin-hero">
+        <h2 className="display">Аналитика</h2>
+        <p className="lede">Только ваши рейсы и борт. Биржа в расчёт не входит.</p>
+      </header>
+      <section>
+        <h3 className="analytics-kicker">Перевозки</h3>
+        <div className="metric-grid">
+          <MetricCard name="С грузом" value={fmtNum(loadedKm)} unit="км" />
+          <MetricCard name="Порожняк сэкономлен" value={fmtNum(savedKm)} unit="км" />
+          <MetricCard name="Выручка" value={fmtNum(earned)} unit="₸" />
+          <MetricCard name="Обратки" value={fmtNum(backhaul)} unit="рейсов" />
+        </div>
+      </section>
+      <section>
+        <h3 className="analytics-kicker">Сейчас</h3>
+        <div className="metric-grid analytics-now">
+          <MetricCard name="В работе" value={fmtNum(work)} unit="рейсов" />
+          <MetricCard name="В рейсе" value={fmtNum(transit)} unit="рейсов" />
+          <MetricCard name="Доставлено" value={fmtNum(delivered.length)} unit="рейсов" />
+          <MetricCard name="Всего" value={fmtNum(trips.length)} unit="рейсов" />
+        </div>
+      </section>
+      {fleet.length > 0 && (
+        <section>
+          <h3 className="analytics-kicker">Парк</h3>
+          <div className="metric-grid analytics-now">
+            <MetricCard name="Бортов" value={fmtNum(fleet.length)} unit="машин" />
+            <MetricCard name="Live GPS" value={fmtNum(live)} unit="бортов" />
+            <MetricCard name="Свободных" value={fmtNum(idle)} unit="бортов" />
+            <MetricCard name="Занятых" value={fmtNum(busy)} unit="бортов" />
+          </div>
+        </section>
+      )}
+      <div className="chart-grid">
+        <ChartCard title="Коридоры, км">
+          <BarList
+            items={corridors.map((c) => ({ label: `${c.from} → ${c.to}`, value: c.km, tone: "sea" }))}
+            unit="км"
+          />
+        </ChartCard>
+        <ChartCard title="Статусы рейсов">
+          <DonutChart slices={slices} />
+        </ChartCard>
+        <ChartCard title="Типы груза">
+          <BarList items={cargoBars} />
+        </ChartCard>
+        <ChartCard title="Прямые и обратки">
+          <BarList
+            items={[
+              { label: "Прямые", value: trips.length - backhaul, tone: "sea" },
+              { label: "Обратки", value: backhaul, tone: "coral" },
+            ]}
+          />
+        </ChartCard>
+        {fleetSlices.length > 0 && (
+          <ChartCard title="Состояние парка">
+            <DonutChart slices={fleetSlices} />
+          </ChartCard>
+        )}
+        {plateBars.length > 0 && (
+          <ChartCard title="Километраж по бортам">
+            <BarList items={plateBars} unit="км" />
+          </ChartCard>
+        )}
+        {days.length > 0 && (
+          <ChartCard title="Рейсы за 14 дней">
+            <SparkBars points={days} />
+          </ChartCard>
+        )}
+      </div>
     </div>
   );
 }
