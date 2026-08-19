@@ -24,7 +24,7 @@ Windows PowerShell:
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000
 ```
 
 Linux / macOS:
@@ -33,7 +33,7 @@ Linux / macOS:
 source .venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000
 ```
 
 Перед стартом накатите схему: `alembic upgrade head`. Затем справочник населённых пунктов Мангистау и супер-админ. Заявок, парка и прочих учёток нет.

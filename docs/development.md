@@ -31,7 +31,7 @@ Compose задаёт `DATABASE_URL` на PgBouncer, `REDIS_URL`, `OSRM_URL=http:
 ```bash
 cd backend
 alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000
 ```
 
 ## Зависимости
@@ -40,7 +40,7 @@ Backend: FastAPI, uvicorn, gunicorn (Docker), SQLAlchemy, Alembic, ARQ, psycopg,
 
 Frontend: react, react-dom, react-router-dom, maplibre-gl. Скрипты: `npm run dev` / `build` / `preview`.
 
-Python-пакеты приложения живут в `backend/app/` — запуск uvicorn и alembic из каталога `backend`.
+Python-пакеты приложения живут в `backend/app/` — запуск uvicorn и alembic из каталога `backend`. `--reload-dir app` не смотрит в `.venv`: иначе `pip install` или pytest гоняют бесконечные рестарты WatchFiles.
 
 ## Тесты
 
