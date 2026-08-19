@@ -1,15 +1,4 @@
-import { useEffect, useState } from "react";
-import { Skeleton } from "../components/Empty";
-import { api } from "../api";
-import type { Analytics } from "../types";
-
 export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
-  const [stats, setStats] = useState<Analytics | null>(null);
-
-  useEffect(() => {
-    api<Analytics>("/api/analytics/summary").then(setStats).catch(() => setStats(null));
-  }, []);
-
   return (
     <div className="about">
       <section className="about-hero">
@@ -54,7 +43,7 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
         <div className="about-grid">
           <article className="card">
             <h3>Биржа заявок</h3>
-            <p className="lede">Отправитель размещает груз между реальными пунктами Мангистау, перевозчик берёт заказ.</p>
+            <p className="lede">Отправитель размещает груз между пунктами Мангистау. Перевозчик берёт заявку на компанию и ставит своего водителя.</p>
           </article>
           <article className="card">
             <h3>Живой трекинг</h3>
@@ -66,7 +55,7 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
           </article>
           <article className="card">
             <h3>Аналитика</h3>
-            <p className="lede">Админ видит коридоры, экономию топлива и может управлять парком и заявками.</p>
+            <p className="lede">Админ видит обзор и пользователей. Парк и заявки ведут перевозчик и отправитель.</p>
           </article>
         </div>
       </section>
@@ -81,19 +70,19 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
           </article>
           <article className="card">
             <h3>Админ</h3>
-            <p className="lede">Админка: заявки, парк, пункты. Создаёт отправителей, перевозчиков и водителей. Другого админа создать не может.</p>
+            <p className="lede">Пользователи отправителей и перевозчиков. Заявки, борт и пункты не трогает.</p>
           </article>
           <article className="card">
             <h3>Отправитель</h3>
-            <p className="lede">Создание заявки, расчёт цены по км и типу груза, статус и трек доставки.</p>
+            <p className="lede">Заявка, цена, трек. Добавляет пункты на карте, если нужной точки ещё нет в справочнике.</p>
           </article>
           <article className="card">
             <h3>Перевозчик</h3>
-            <p className="lede">Лента биржи, подсказки попуток, взятие заказа на конкретную машину.</p>
+            <p className="lede">Биржа, свои борты. Берёт заявку на компанию и назначает свободный борт.</p>
           </article>
           <article className="card">
             <h3>Водитель</h3>
-            <p className="lede">Карточка рейса и трансляция геолокации на общую карту.</p>
+            <p className="lede">Свой борт и назначенный рейс: прибытие, погрузка, выезд, завершение.</p>
           </article>
         </div>
       </section>
@@ -105,28 +94,6 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
           Без цифровой биржи холостой возврат в регионе оцениваем около 40% пробега. Платформа подбирает
           обратную загрузку в коридоре маршрута. Дизель 32 л / 100 км, 295 ₸/л.
         </p>
-        {!stats ? (
-          <Skeleton rows={2} />
-        ) : (
-          <div className="stats">
-            <div className="stat">
-              <b>{stats.settlements}</b>
-              <span>пунктов Мангистау в справочнике</span>
-            </div>
-            <div className="stat">
-              <b>{Math.round(stats.empty_km_saved)}</b>
-              <span>км порожняка уже сэкономлено в данных</span>
-            </div>
-            <div className="stat">
-              <b>{stats.fuel_saved_l.toFixed(0)} л</b>
-              <span>дизель</span>
-            </div>
-            <div className="stat">
-              <b>{stats.money_saved_kzt.toLocaleString("ru-KZ")} ₸</b>
-              <span>на топливе</span>
-            </div>
-          </div>
-        )}
       </section>
     </div>
   );

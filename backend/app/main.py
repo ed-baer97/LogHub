@@ -1,24 +1,24 @@
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
-from app.routers import admin, analytics, auth, geo, orders, tracking
+from app.routers import admin, analytics, auth, fleet, geo, orders, tracking
 from app.seed import seed_if_empty
-from app.services.simulator import start_simulator
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        await seed_if_empty(db)
-    finally:
-        db.close()
-    start_simulator()
+    if not os.getenv("TESTING"):
+        db = SessionLocal()
+        try:
+            await seed_if_empty(db)
+        finally:
+            db.close()
     yield
 
 
@@ -34,6 +34,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(geo.router)
 app.include_router(orders.router)
+app.include_router(fleet.router)
 app.include_router(tracking.router)
 app.include_router(analytics.router)
 app.include_router(admin.router)

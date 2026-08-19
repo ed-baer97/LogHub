@@ -2,19 +2,34 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
-from app.auth import get_current_user, get_optional_user
+from app.access import (
+    CANCELLABLE,
+    assert_bort_assignable,
+    get_order_or_404,
+    get_owned_order,
+    get_owned_vehicle,
+    get_usable_point,
+    release_bort,
+    require_roles,
+    visible_orders_query,
+)
+from app.auth import get_current_user
 from app.database import get_db
-from app.models import Order, Settlement, User, Vehicle
-from app.schemas import OrderCreate, OrderOut, QuoteOut, TakeOrderIn
+from app.models import Order, User, Vehicle
+from app.roles import CARRIER, DRIVER, SENDER
+from app.schemas import OrderAssignIn, OrderCreate, OrderOut, OrderUpdate, QuoteOut, TakeOrderIn
 from app.services.events import bus
 from app.services.matching import match_for_vehicle, match_orders
 from app.services.osrm import ensure_route, get_cached_route, route_coords
 from app.services.pricing import price_model
-from app.services.simulator import assign_route
+from app.services.simulator import publish_vehicles
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+DbDep = Annotated[Session, Depends(get_db)]
+UserDep = Annotated[User, Depends(get_current_user)]
 
 
 def _out(o: Order, plate: str | None = None) -> OrderOut:
@@ -46,25 +61,24 @@ def _out(o: Order, plate: str | None = None) -> OrderOut:
     )
 
 
-def _load(db: Session, q):
-    return q.options(
-        joinedload(Order.origin),
-        joinedload(Order.dest),
-        joinedload(Order.sender),
-    )
+def _plate(db: Session, o: Order) -> str | None:
+    if not o.vehicle_id:
+        return None
+    v = db.get(Vehicle, o.vehicle_id)
+    return v.plate if v else None
 
 
 @router.get("/quote", response_model=QuoteOut)
 async def quote(
     origin_id: int,
     dest_id: int,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbDep,
+    user: UserDep,
     weight_kg: int = 1000,
     cargo_type: str = "general",
 ):
-    origin, dest = db.get(Settlement, origin_id), db.get(Settlement, dest_id)
-    if not origin or not dest:
-        raise HTTPException(404, "Населённый пункт не найден")
+    origin = get_usable_point(db, user, origin_id)
+    dest = get_usable_point(db, user, dest_id)
     if origin.id == dest.id:
         raise HTTPException(400, "Откуда и куда совпадают")
     route = await ensure_route(db, origin, dest)
@@ -79,71 +93,57 @@ async def quote(
 
 @router.get("", response_model=list[OrderOut])
 def list_orders(
-    db: Annotated[Session, Depends(get_db)],
-    user: Annotated[User | None, Depends(get_optional_user)] = None,
+    db: DbDep,
+    user: UserDep,
     status: str | None = None,
-    mine: bool = False,
 ):
-    q = _load(db, db.query(Order))
+    q = visible_orders_query(db, user)
     if status:
         q = q.filter(Order.status == status)
-    if mine and user:
-        if user.role == "sender":
-            q = q.filter(Order.sender_id == user.id)
-        elif user.role == "carrier":
-            q = q.filter(Order.carrier_id == user.id)
     rows = q.order_by(Order.id.desc()).all()
-    plates = {v.id: v.plate for v in db.query(Vehicle).all()}
-    return [_out(o, plates.get(o.vehicle_id) if o.vehicle_id else None) for o in rows]
+    return [_out(o, _plate(db, o)) for o in rows]
 
 
 @router.get("/hints/backhaul")
-def backhaul(
-    vehicle_id: int,
-    db: Annotated[Session, Depends(get_db)],
-    user: Annotated[User, Depends(get_current_user)],
-):
-    v = db.get(Vehicle, vehicle_id)
-    if not v:
-        raise HTTPException(404, "Машина не найдена")
-    open_orders = _load(db, db.query(Order).filter(Order.status == "open")).all()
-    return match_for_vehicle(db, v, open_orders)
+def backhaul(db: DbDep, user: Annotated[User, Depends(require_roles(CARRIER))]):
+    open_orders = visible_orders_query(db, user).filter(Order.status == "open").all()
+    fleet = db.query(Vehicle).filter(Vehicle.owner_id == user.id, Vehicle.active.is_(True)).all()
+    best: dict[int, dict] = {}
+    for v in fleet:
+        for h in match_for_vehicle(db, v, open_orders):
+            prev = best.get(h["order_id"])
+            if not prev or h["empty_km_saved"] > prev["empty_km_saved"]:
+                best[h["order_id"]] = h
+    return list(best.values())
 
 
 @router.get("/hints/leg")
 def leg_hints(
     origin_id: int,
     dest_id: int,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbDep,
+    user: Annotated[User, Depends(require_roles(CARRIER, SENDER))],
 ):
-    origin, dest = db.get(Settlement, origin_id), db.get(Settlement, dest_id)
-    if not origin or not dest:
-        raise HTTPException(404)
-    open_orders = _load(db, db.query(Order).filter(Order.status == "open")).all()
+    origin = get_usable_point(db, user, origin_id)
+    dest = get_usable_point(db, user, dest_id)
+    open_orders = visible_orders_query(db, user).filter(Order.status == "open").all()
     return match_orders(db, origin, dest, open_orders)
 
 
 @router.get("/{order_id}", response_model=OrderOut)
-def get_order(order_id: int, db: Annotated[Session, Depends(get_db)]):
-    o = _load(db, db.query(Order).filter(Order.id == order_id)).one_or_none()
-    if not o:
-        raise HTTPException(404, "Заявка не найдена")
-    plate = None
-    if o.vehicle_id:
-        v = db.get(Vehicle, o.vehicle_id)
-        plate = v.plate if v else None
-    return _out(o, plate)
+def get_order(order_id: int, db: DbDep, user: UserDep):
+    o = get_order_or_404(db, user, order_id)
+    return _out(o, _plate(db, o))
 
 
 @router.post("", response_model=OrderOut)
 async def create_order(
     body: OrderCreate,
-    db: Annotated[Session, Depends(get_db)],
-    user: Annotated[User, Depends(get_current_user)],
+    db: DbDep,
+    user: Annotated[User, Depends(require_roles(SENDER))],
 ):
-    origin, dest = db.get(Settlement, body.origin_id), db.get(Settlement, body.dest_id)
-    if not origin or not dest:
-        raise HTTPException(404, "Пункт не найден")
+    origin = get_usable_point(db, user, body.origin_id)
+    dest = get_usable_point(db, user, body.dest_id)
     if origin.id == dest.id:
         raise HTTPException(400, "Откуда и куда совпадают")
     route = await ensure_route(db, origin, dest)
@@ -163,54 +163,135 @@ async def create_order(
     )
     db.add(o)
     db.commit()
-    o = _load(db, db.query(Order).filter(Order.id == o.id)).one()
+    o = get_order_or_404(db, user, o.id)
     bus.publish({"type": "order_new", "id": o.id})
     return _out(o)
+
+
+@router.patch("/{order_id}", response_model=OrderOut)
+async def update_order(
+    order_id: int,
+    body: OrderUpdate,
+    db: DbDep,
+    user: Annotated[User, Depends(require_roles(SENDER))],
+):
+    o = get_owned_order(db, user, order_id, as_sender=True)
+    if o.status != "open":
+        raise HTTPException(409, "Редактировать можно только открытую заявку")
+    origin_id = body.origin_id or o.origin_id
+    dest_id = body.dest_id or o.dest_id
+    origin = get_usable_point(db, user, origin_id)
+    dest = get_usable_point(db, user, dest_id)
+    if origin.id == dest.id:
+        raise HTTPException(400, "Откуда и куда совпадают")
+    if body.origin_id or body.dest_id or body.weight_kg or body.cargo_type:
+        route = await ensure_route(db, origin, dest)
+        o.origin_id = origin.id
+        o.dest_id = dest.id
+        o.distance_km = route.distance_km
+        weight = body.weight_kg or o.weight_kg
+        cargo = body.cargo_type or o.cargo_type
+        o.price_recommended = price_model.predict(route.distance_km, weight, cargo)
+    for field in ("cargo_type", "cargo_title", "weight_kg", "price_offered"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(o, field, value)
+    db.commit()
+    o = get_order_or_404(db, user, o.id)
+    return _out(o, _plate(db, o))
+
+
+@router.post("/{order_id}/cancel", response_model=OrderOut)
+def cancel_order(
+    order_id: int,
+    db: DbDep,
+    user: Annotated[User, Depends(require_roles(SENDER))],
+):
+    o = get_owned_order(db, user, order_id, as_sender=True)
+    if o.status not in CANCELLABLE:
+        raise HTTPException(409, "Отменить можно только до прибытия на погрузку")
+    release_bort(db, o)
+    o.status = "cancelled"
+    db.commit()
+    bus.publish({"type": "order", "id": o.id, "status": "cancelled"})
+    publish_vehicles(db)
+    o = get_order_or_404(db, user, o.id)
+    return _out(o)
+
+
+@router.delete("/{order_id}")
+def delete_order(
+    order_id: int,
+    db: DbDep,
+    user: Annotated[User, Depends(require_roles(SENDER))],
+):
+    o = get_owned_order(db, user, order_id, as_sender=True)
+    if o.status != "open":
+        raise HTTPException(409, "Удалить можно только заявку, которую ещё не взяли")
+    oid = o.id
+    db.delete(o)
+    db.commit()
+    bus.publish({"type": "order", "id": oid, "status": "deleted"})
+    return {"ok": True}
 
 
 @router.post("/{order_id}/take", response_model=OrderOut)
 def take_order(
     order_id: int,
-    body: TakeOrderIn,
-    db: Annotated[Session, Depends(get_db)],
-    user: Annotated[User, Depends(get_current_user)],
+    db: DbDep,
+    user: Annotated[User, Depends(require_roles(CARRIER))],
+    body: TakeOrderIn | None = None,
 ):
-    if user.role not in {"carrier", "admin", "dispatcher", "driver"}:
-        raise HTTPException(403, "Только перевозчик может брать заказ")
-    o = _load(db, db.query(Order).filter(Order.id == order_id)).one_or_none()
-    if not o:
-        raise HTTPException(404, "Заявка не найдена")
+    o = get_order_or_404(db, user, order_id)
     if o.status != "open":
         raise HTTPException(409, "Заявка уже занята")
-    v = db.get(Vehicle, body.vehicle_id)
-    if not v:
-        raise HTTPException(404, "Машина не найдена")
-    if v.capacity_kg < o.weight_kg:
-        raise HTTPException(400, "Груз тяжелее грузоподъёмности")
+    o.status = "taken"
+    o.carrier_id = user.id
+    o.taken_at = datetime.utcnow()
+    db.commit()
+    bus.publish({"type": "order", "id": o.id, "status": "taken"})
+    o = get_order_or_404(db, user, o.id)
+    return _out(o)
 
+
+def _assign_to_vehicle(db: Session, o: Order, v: Vehicle) -> None:
+    assert_bort_assignable(v, o)
     hints = match_for_vehicle(db, v, [o])
     if hints:
         o.empty_km_saved = hints[0]["empty_km_saved"]
         o.is_backhaul = True
-
-    o.status = "transit"
-    o.carrier_id = v.owner_id
+    if o.vehicle_id and o.vehicle_id != v.id:
+        old = db.get(Vehicle, o.vehicle_id)
+        if old and old.current_order_id == o.id:
+            old.current_order_id = None
+            old.status = "idle"
     o.vehicle_id = v.id
-    o.taken_at = datetime.utcnow()
+    o.status = "assigned"
     v.current_order_id = o.id
-    v.status = "enroute"
-    assign_route(db, v, o.origin_id, o.dest_id)
+    v.status = "assigned"
+
+
+@router.post("/{order_id}/assign", response_model=OrderOut)
+def assign_order(
+    order_id: int,
+    body: OrderAssignIn,
+    db: DbDep,
+    user: Annotated[User, Depends(require_roles(CARRIER))],
+):
+    o = get_owned_order(db, user, order_id, as_carrier=True)
+    if o.status not in {"taken", "assigned"}:
+        raise HTTPException(409, "Назначить борт можно только до прибытия на погрузку")
+    v = get_owned_vehicle(db, user, body.vehicle_id)
+    _assign_to_vehicle(db, o, v)
     db.commit()
-    bus.publish({"type": "order", "id": o.id, "status": "transit"})
-    o = _load(db, db.query(Order).filter(Order.id == o.id)).one()
+    bus.publish({"type": "order", "id": o.id, "status": o.status})
+    o = get_order_or_404(db, user, o.id)
     return _out(o, v.plate)
 
 
 @router.get("/{order_id}/route")
-def order_route(order_id: int, db: Annotated[Session, Depends(get_db)]):
-    o = db.get(Order, order_id)
-    if not o:
-        raise HTTPException(404, "Заявка не найдена")
+def order_route(order_id: int, db: DbDep, user: UserDep):
+    o = get_order_or_404(db, user, order_id)
     cached = get_cached_route(db, o.origin_id, o.dest_id)
     if not cached:
         return {"geometry": [], "distance_km": o.distance_km}

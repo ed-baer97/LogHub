@@ -5,13 +5,13 @@ import { useTheme } from "../theme";
 import type { Role, User } from "../types";
 import { useToast } from "./Toast";
 
-const CABINET: Record<Role, { to: string; label: string }> = {
-  sender: { to: "/sender", label: "Заявки" },
-  carrier: { to: "/carrier", label: "Биржа" },
-  driver: { to: "/driver", label: "GPS" },
-  admin: { to: "/dispatcher", label: "Админка" },
-  superadmin: { to: "/dispatcher", label: "Админка" },
-  dispatcher: { to: "/dispatcher", label: "Админка" },
+const CABINET: Record<Role, string> = {
+  sender: "/sender",
+  carrier: "/carrier",
+  driver: "/driver",
+  admin: "/dispatcher",
+  superadmin: "/dispatcher",
+  dispatcher: "/dispatcher",
 };
 
 const ROLE_RU: Record<Role, string> = {
@@ -75,20 +75,11 @@ export default function Layout({
   return (
     <div className="app">
       <header className="topbar">
-        <NavLink to={cabinet ? cabinet.to : "/"} className="brand">
+        <NavLink to={cabinet ?? "/"} className="brand">
           <div className="mark" />
           <h1>Caspian LogHub</h1>
           <span>Мангистау</span>
         </NavLink>
-        <nav className="nav">
-          {user ? (
-            cabinet && <NavLink to={cabinet.to}>{cabinet.label}</NavLink>
-          ) : (
-            <NavLink to="/" end>
-              О проекте
-            </NavLink>
-          )}
-        </nav>
         <div className="userbox">
           <button
             className="btn secondary small theme-toggle"

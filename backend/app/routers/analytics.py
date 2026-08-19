@@ -4,17 +4,22 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
+from app.access import require_staff
 from app.database import get_db
-from app.models import HistoricalTrip, Order, Settlement, Vehicle
+from app.models import HistoricalTrip, Order, Settlement, User, Vehicle
+from app.roles import is_superadmin
 from app.services.matching import DIESEL_KZT_PER_L, DIESEL_L_PER_100KM
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
-EMPTY_SHARE_WITHOUT = 0.40  # региональная оценка порожнего пробега без биржи
+EMPTY_SHARE_WITHOUT = 0.40
+
+StaffDep = Annotated[User, Depends(require_staff)]
+DbDep = Annotated[Session, Depends(get_db)]
 
 
 @router.get("/summary")
-def summary(db: Annotated[Session, Depends(get_db)]):
+def summary(db: DbDep, user: StaffDep):
     delivered = (
         db.query(Order)
         .options(joinedload(Order.origin), joinedload(Order.dest))
@@ -24,7 +29,7 @@ def summary(db: Annotated[Session, Depends(get_db)]):
     active = (
         db.query(Order)
         .options(joinedload(Order.origin), joinedload(Order.dest))
-        .filter(Order.status.in_(["open", "taken", "pickup", "transit"]))
+        .filter(Order.status.in_(["open", "taken", "assigned", "arrived", "loading", "pickup", "transit"]))
         .all()
     )
     loaded_km = sum(o.distance_km for o in delivered)
@@ -45,7 +50,7 @@ def summary(db: Annotated[Session, Depends(get_db)]):
     hist_empty = db.query(func.sum(HistoricalTrip.distance_km)).filter(HistoricalTrip.empty_return.is_(True)).scalar() or 0
     hist_all = db.query(func.sum(HistoricalTrip.distance_km)).scalar() or 1
 
-    return {
+    payload = {
         "settlements": db.query(Settlement).count(),
         "vehicles": db.query(Vehicle).count(),
         "open_orders": db.query(Order).filter(Order.status == "open").count(),
@@ -65,3 +70,9 @@ def summary(db: Annotated[Session, Depends(get_db)]):
             "empty_share_without": EMPTY_SHARE_WITHOUT,
         },
     }
+    if not is_superadmin(user.role):
+        payload.pop("empty_km_without_platform", None)
+        payload.pop("empty_share_history", None)
+        payload["assumptions"] = {}
+        payload["live_gps"] = None
+    return payload

@@ -13,6 +13,7 @@ class SettlementOut(BaseModel):
     lon: float
     population: int
     note: str | None = None
+    sender_id: int | None = None
 
 
 class UserOut(BaseModel):
@@ -24,6 +25,9 @@ class UserOut(BaseModel):
     role: str
     company: str | None = None
     phone: str | None = None
+    carrier_id: int | None = None
+    is_active: bool = True
+    initial_password: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -44,6 +48,7 @@ class VehicleOut(BaseModel):
     kind: str
     capacity_kg: int
     owner_id: int
+    driver_id: int | None = None
     driver_name: str
     status: str
     lat: float
@@ -52,6 +57,11 @@ class VehicleOut(BaseModel):
     home_id: int
     current_order_id: int | None = None
     live: bool = False
+    active: bool = True
+    driver_email: str | None = None
+    driver_phone: str | None = None
+    driver_active: bool = True
+    initial_password: str | None = None
 
 
 class OrderCreate(BaseModel):
@@ -60,6 +70,15 @@ class OrderCreate(BaseModel):
     cargo_type: str = "general"
     cargo_title: str
     weight_kg: int = Field(gt=0, lt=40000)
+    price_offered: int | None = None
+
+
+class OrderUpdate(BaseModel):
+    origin_id: int | None = None
+    dest_id: int | None = None
+    cargo_type: str | None = None
+    cargo_title: str | None = None
+    weight_kg: int | None = Field(default=None, gt=0, lt=40000)
     price_offered: int | None = None
 
 
@@ -93,13 +112,17 @@ class OrderOut(BaseModel):
 
 
 class TakeOrderIn(BaseModel):
-    vehicle_id: int
+    vehicle_id: int | None = None
 
 
 class TrackPingIn(BaseModel):
     vehicle_id: int
     lat: float
     lon: float
+
+
+class VehicleIdIn(BaseModel):
+    vehicle_id: int
 
 
 class MatchHint(BaseModel):
@@ -125,6 +148,7 @@ class UserCreate(BaseModel):
     company: str | None = None
     phone: str | None = None
     password: str = "demo"
+    carrier_id: int | None = None
 
 
 class UserUpdate(BaseModel):
@@ -132,25 +156,11 @@ class UserUpdate(BaseModel):
     company: str | None = None
     phone: str | None = None
     role: str | None = None
+    is_active: bool | None = None
 
 
-class VehicleCreate(BaseModel):
-    plate: str
-    kind: str = "tent"
-    capacity_kg: int = Field(gt=0, lt=60000)
-    owner_id: int
-    driver_name: str
-    home_id: int
-
-
-class VehicleUpdate(BaseModel):
-    plate: str | None = None
-    kind: str | None = None
-    capacity_kg: int | None = None
-    owner_id: int | None = None
-    driver_name: str | None = None
-    home_id: int | None = None
-    status: str | None = None
+class PasswordResetIn(BaseModel):
+    password: str = "demo"
 
 
 class SettlementCreate(BaseModel):
@@ -173,3 +183,27 @@ class SettlementUpdate(BaseModel):
 
 class OrderAssignIn(BaseModel):
     vehicle_id: int
+
+
+class BortCreate(BaseModel):
+    plate: str
+    kind: str = "tent"
+    capacity_kg: int = Field(gt=0, lt=60000)
+    home_id: int
+    driver_name: str
+    driver_email: str
+    driver_phone: str | None = None
+    driver_password: str = "demo"
+
+
+class BortUpdate(BaseModel):
+    plate: str | None = None
+    kind: str | None = None
+    capacity_kg: int | None = Field(default=None, gt=0, lt=60000)
+    home_id: int | None = None
+    driver_name: str | None = None
+    driver_phone: str | None = None
+    driver_email: str | None = None
+    driver_password: str | None = None
+    driver_active: bool | None = None
+    active: bool | None = None

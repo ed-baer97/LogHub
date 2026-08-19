@@ -32,15 +32,23 @@ export default function MapView({
   vehicles,
   routes = [],
   trail = [],
+  navPosition = "top-right",
+  onPick,
+  fitTo,
 }: {
   settlements: Settlement[];
   vehicles: Vehicle[];
   routes?: RouteLine[];
   trail?: number[][];
+  navPosition?: "top-right" | "top-left" | "bottom-right" | "bottom-left";
+  onPick?: (lat: number, lon: number) => void;
+  fitTo?: number[][];
 }) {
   const { theme } = useTheme();
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markers = useRef<maplibregl.Marker[]>([]);
@@ -93,7 +101,7 @@ export default function MapView({
       attributionControl: true,
     });
     popup.current = new maplibregl.Popup({ offset: 16, closeButton: true, maxWidth: "260px" });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), navPosition);
     map.on("load", () => {
       map.addSource("routes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({
@@ -116,6 +124,9 @@ export default function MapView({
       });
       ready.current = true;
       applyOverlays(map);
+    });
+    map.on("click", (e) => {
+      pickRef.current?.(e.lngLat.lat, e.lngLat.lng);
     });
     mapRef.current = map;
     const ro = new ResizeObserver(() => map.resize());
@@ -189,6 +200,17 @@ export default function MapView({
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || !ready.current || !fitTo?.length) return;
+    const bounds = new maplibregl.LngLatBounds();
+    for (const pt of fitTo) {
+      if (pt.length >= 2) bounds.extend([pt[0], pt[1]]);
+    }
+    if (bounds.isEmpty()) return;
+    map.fitBounds(bounds, { padding: 72, maxZoom: 11, duration: 700 });
+  }, [fitTo]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map) return;
     const apply = () => {
       const src = map.getSource("osm") as maplibregl.RasterTileSource | undefined;
@@ -199,7 +221,7 @@ export default function MapView({
   }, [theme]);
 
   return (
-    <div className="map-wrap">
+    <div className={`map-wrap${onPick ? " pick-mode" : ""}`}>
       <div ref={ref} style={{ position: "absolute", inset: 0 }} />
       <div className="legend">
         <div>

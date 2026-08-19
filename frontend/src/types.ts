@@ -11,6 +11,9 @@ export type User = {
   role: Role;
   company?: string | null;
   phone?: string | null;
+  carrier_id?: number | null;
+  is_active?: boolean;
+  initial_password?: string | null;
 };
 
 export type Settlement = {
@@ -21,6 +24,7 @@ export type Settlement = {
   lon: number;
   population: number;
   note?: string | null;
+  sender_id?: number | null;
 };
 
 export type Vehicle = {
@@ -29,7 +33,12 @@ export type Vehicle = {
   kind: string;
   capacity_kg: number;
   owner_id: number;
+  driver_id?: number | null;
   driver_name: string;
+  driver_email?: string | null;
+  driver_phone?: string | null;
+  driver_active?: boolean;
+  initial_password?: string | null;
   status: string;
   lat: number;
   lon: number;
@@ -37,6 +46,7 @@ export type Vehicle = {
   home_id: number;
   current_order_id?: number | null;
   live: boolean;
+  active?: boolean;
 };
 
 export type Order = {

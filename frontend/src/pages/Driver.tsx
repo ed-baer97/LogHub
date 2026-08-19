@@ -2,29 +2,32 @@ import { useEffect, useRef, useState } from "react";
 import Empty from "../components/Empty";
 import MapView from "../components/MapView";
 import { useToast } from "../components/Toast";
-import { api, errText } from "../api";
-import type { Order, Settlement, Vehicle } from "../types";
+import { api, errText, streamUrl } from "../api";
+import { STATUS_RU } from "../lib/labels";
+import type { Order, Settlement, User, Vehicle } from "../types";
 
-export default function Driver() {
+export default function Driver({ user }: { user: User }) {
   const toast = useToast();
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [vehicleId, setVehicleId] = useState(0);
   const [trip, setTrip] = useState<Order | null>(null);
-  const [status, setStatus] = useState("Выберите борт и разрешите геолокацию");
+  const [route, setRoute] = useState<number[][]>([]);
+  const [status, setStatus] = useState("Ждём назначение рейса на ваш борт.");
   const [live, setLive] = useState(false);
   const watch = useRef<number | null>(null);
 
+  const current = vehicles.find((v) => v.driver_id === user.id) ?? vehicles[0] ?? null;
+
   useEffect(() => {
     api<Settlement[]>("/api/geo/settlements").then(setSettlements);
-    api<Vehicle[]>("/api/geo/vehicles").then((v) => {
-      setVehicles(v);
-      if (v[0]) setVehicleId(v[0].id);
-    });
-    const es = new EventSource("/api/tracking/stream");
+    api<Vehicle[]>("/api/geo/vehicles").then(setVehicles);
+    const es = new EventSource(streamUrl("/api/tracking/stream"));
     es.onmessage = (ev) => {
       const data = JSON.parse(ev.data);
-      if (data.type === "fleet") setVehicles(data.vehicles);
+      if (data.type === "fleet") setVehicles(data.vehicles ?? []);
+      if (data.type === "order") {
+        api<Vehicle[]>("/api/geo/vehicles").then(setVehicles).catch(() => undefined);
+      }
     };
     return () => {
       es.close();
@@ -32,82 +35,130 @@ export default function Driver() {
     };
   }, []);
 
-  const current = vehicles.find((v) => v.id === vehicleId);
-
   useEffect(() => {
     if (!current?.current_order_id) {
       setTrip(null);
+      setRoute([]);
+      setLive(false);
       return;
     }
     api<Order>(`/api/orders/${current.current_order_id}`)
       .then(setTrip)
       .catch(() => setTrip(null));
-  }, [current?.current_order_id]);
+    api<{ geometry: number[][] }>(`/api/orders/${current.current_order_id}/route`)
+      .then((r) => setRoute(r.geometry ?? []))
+      .catch(() => setRoute([]));
+  }, [current?.current_order_id, current?.status]);
 
-  function start() {
-    if (!navigator.geolocation) {
-      setStatus("Геолокация недоступна в этом браузере");
-      toast.err("Геолокация недоступна");
+  function clearWatch() {
+    if (watch.current != null) navigator.geolocation.clearWatch(watch.current);
+    watch.current = null;
+  }
+
+  async function refreshTrip() {
+    if (!current?.current_order_id) return;
+    const next = await api<Order>(`/api/orders/${current.current_order_id}`);
+    setTrip(next);
+    setVehicles(await api<Vehicle[]>("/api/geo/vehicles"));
+  }
+
+  async function step(path: string, okMsg: string) {
+    if (!current) return;
+    try {
+      await api(path, { method: "POST", body: JSON.stringify({ vehicle_id: current.id }) });
+      toast.ok(okMsg);
+      await refreshTrip();
+    } catch (e) {
+      toast.err(errText(e));
+    }
+  }
+
+  async function depart() {
+    if (!current) return;
+    try {
+      await api("/api/tracking/start-route", {
+        method: "POST",
+        body: JSON.stringify({ vehicle_id: current.id }),
+      });
+      setLive(true);
+      setStatus("Выехали. Маршрут по навигатору.");
+      toast.ok("В пути");
+      await refreshTrip();
+    } catch (e) {
+      toast.err(errText(e));
       return;
     }
-    setLive(true);
-    setStatus("Идёт передача координат…");
+    if (!navigator.geolocation) return;
     watch.current = navigator.geolocation.watchPosition(
       async (pos) => {
         try {
           await api("/api/tracking/ping", {
             method: "POST",
             body: JSON.stringify({
-              vehicle_id: vehicleId,
+              vehicle_id: current.id,
               lat: pos.coords.latitude,
               lon: pos.coords.longitude,
             }),
           });
-          setStatus(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`);
-        } catch (e) {
-          toast.err(errText(e));
+          setStatus(`Live GPS · ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`);
+        } catch (err) {
+          toast.err(errText(err));
         }
       },
-      (e) => {
-        setLive(false);
-        setStatus(e.message);
-        toast.err(e.message);
-      },
+      () => setStatus("Движение по навигатору (геолокация недоступна)"),
       { enableHighAccuracy: true, maximumAge: 3000 }
     );
   }
 
-  function stop() {
-    if (watch.current != null) navigator.geolocation.clearWatch(watch.current);
-    watch.current = null;
-    setLive(false);
-    setStatus("Трансляция остановлена");
+  async function complete() {
+    if (!current) return;
+    try {
+      await api("/api/tracking/complete-route", {
+        method: "POST",
+        body: JSON.stringify({ vehicle_id: current.id }),
+      });
+      clearWatch();
+      setLive(false);
+      setTrip(null);
+      setStatus("Рейс завершён. Борт свободен.");
+      toast.ok("Доставка закрыта");
+      setVehicles(await api<Vehicle[]>("/api/geo/vehicles"));
+    } catch (e) {
+      toast.err(errText(e));
+    }
   }
+
+  const routes = trip?.status === "transit" && route.length > 1 ? [{ id: String(trip.id), coords: route }] : [];
+  const mapVehicles = current ? [current] : [];
+  const st = trip?.status;
 
   return (
     <div className="page split">
       <aside className="side">
-        <p className="kicker">Водитель · GPS</p>
+        <p className="kicker">Водитель · мой борт</p>
         <h2 className="display" style={{ fontSize: 34 }}>
-          Рейс и геолокация
+          Рейс
         </h2>
         <p className="lede">
-          Координаты с телефона идут на ту же карту, что видит диспетчер. Пока идут live-пакеты,
-          симулятор этой машины молчит.
+          Этапы по порядку: прибыл → погрузка → выехать → завершить. Пропускать нельзя. GPS с телефона не обязателен.
         </p>
-        <label>
-          Борт
-          <select value={vehicleId} onChange={(e) => setVehicleId(Number(e.target.value))}>
-            {vehicles.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.plate} · {v.driver_name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {current ? (
+          <div className="card">
+            <span className={`badge ${current.status === "enroute" ? "transit" : "delivered"}`}>{current.plate}</span>
+            <h3>{current.driver_name}</h3>
+            <div className="meta">
+              <span>{current.kind}</span>
+              <span>{current.capacity_kg} кг</span>
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 8 }}>
+            <Empty title="Нет закреплённого борта" hint="Перевозчик создаёт борт и назначает вас водителем." />
+          </div>
+        )}
         {trip ? (
           <div className="card" style={{ marginTop: 16 }}>
-            <span className={`badge ${trip.status}`}>{trip.status === "transit" ? "в пути" : trip.status}</span>
+            <span className={`badge ${trip.status}`}>{STATUS_RU[trip.status] ?? trip.status}</span>
             <h3>
               {trip.origin_name} → {trip.dest_name}
             </h3>
@@ -117,28 +168,39 @@ export default function Driver() {
               <span>{trip.distance_km} км</span>
             </div>
           </div>
-        ) : (
+        ) : current ? (
           <div style={{ marginTop: 16 }}>
-            <Empty title="Сейчас без груза" hint="Когда диспетчер или перевозчик назначит рейс, он появится здесь." />
+            <Empty title="Сейчас без груза" hint="Когда перевозчик назначит рейс, он появится здесь." />
           </div>
-        )}
+        ) : null}
         <div className="row-actions">
-          {!live ? (
-            <button className="btn" onClick={start}>
-              Начать трансляцию
+          {st === "assigned" ? (
+            <button className="btn" onClick={() => step("/api/tracking/arrive", "Прибыли на погрузку")}>
+              Я прибыл на погрузку
             </button>
-          ) : (
-            <button className="btn secondary" onClick={stop}>
-              Остановить
+          ) : null}
+          {st === "arrived" ? (
+            <button className="btn" onClick={() => step("/api/tracking/start-loading", "Погрузка начата")}>
+              Начать погрузку
             </button>
-          )}
+          ) : null}
+          {st === "loading" ? (
+            <button className="btn" onClick={depart}>
+              Выехать
+            </button>
+          ) : null}
+          {st === "transit" ? (
+            <button className="btn" onClick={complete}>
+              Завершить рейс
+            </button>
+          ) : null}
         </div>
         <p className="lede" style={{ marginTop: 16 }}>
-          {live ? "Live · " : ""}
+          {live ? "В пути · " : ""}
           {status}
         </p>
       </aside>
-      <MapView settlements={settlements} vehicles={vehicles} />
+      <MapView settlements={settlements} vehicles={mapVehicles} routes={routes} />
     </div>
   );
 }

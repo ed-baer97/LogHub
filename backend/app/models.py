@@ -13,11 +13,14 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(160))
     password_hash: Mapped[str] = mapped_column(String(128))
+    password_plain: Mapped[str | None] = mapped_column(String(120), nullable=True)
     role: Mapped[str] = mapped_column(String(32), index=True)
     company: Mapped[str | None] = mapped_column(String(160), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    carrier_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    vehicles: Mapped[list["Vehicle"]] = relationship(back_populates="owner")
+    vehicles: Mapped[list["Vehicle"]] = relationship(back_populates="owner", foreign_keys="Vehicle.owner_id")
     sent_orders: Mapped[list["Order"]] = relationship(
         back_populates="sender", foreign_keys="Order.sender_id"
     )
@@ -33,6 +36,7 @@ class Settlement(Base):
     lon: Mapped[float] = mapped_column(Float)
     population: Mapped[int] = mapped_column(Integer, default=0)
     note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    sender_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
 class Vehicle(Base):
@@ -43,6 +47,7 @@ class Vehicle(Base):
     kind: Mapped[str] = mapped_column(String(32))  # tent, reefer, dump, flatbed
     capacity_kg: Mapped[int] = mapped_column(Integer)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    driver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     driver_name: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(32), default="idle")  # idle, enroute, loading
     lat: Mapped[float] = mapped_column(Float)
@@ -51,8 +56,10 @@ class Vehicle(Base):
     live_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     home_id: Mapped[int] = mapped_column(ForeignKey("settlements.id"))
     current_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    owner: Mapped[User] = relationship(back_populates="vehicles")
+    owner: Mapped[User] = relationship(back_populates="vehicles", foreign_keys=[owner_id])
+    assigned_driver: Mapped[User | None] = relationship(foreign_keys=[driver_id])
     home: Mapped[Settlement] = relationship()
 
 
@@ -69,7 +76,7 @@ class Order(Base):
     price_offered: Mapped[int] = mapped_column(Integer)
     price_recommended: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(32), index=True, default="open")
-    # open, taken, pickup, transit, delivered, cancelled
+    # open, taken, assigned, arrived, loading, transit, delivered, cancelled
     carrier_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
     distance_km: Mapped[float] = mapped_column(Float, default=0)

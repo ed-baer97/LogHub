@@ -28,8 +28,12 @@ def is_staff(role: str) -> bool:
     return normalize_role(role) in {SUPERADMIN, ADMIN}
 
 
-def is_operator(role: str) -> bool:
-    """Админ: правит заявки, парк, пункты. Супер-админ — нет."""
+def is_superadmin(role: str) -> bool:
+    return normalize_role(role) == SUPERADMIN
+
+
+def is_admin(role: str) -> bool:
+    """Оператор пользователей (не перевозок)."""
     return normalize_role(role) == ADMIN
 
 
@@ -38,5 +42,5 @@ def creatable_roles(actor_role: str) -> list[str]:
     if actor == SUPERADMIN:
         return [ADMIN]
     if actor == ADMIN:
-        return [SENDER, CARRIER, DRIVER]
+        return [SENDER, CARRIER]
     return []

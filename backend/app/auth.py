@@ -45,6 +45,8 @@ def get_current_user(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(401, "Пользователь не найден")
+    if not getattr(user, "is_active", True):
+        raise HTTPException(403, "Учётная запись заблокирована")
     return user
 
 

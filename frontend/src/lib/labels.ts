@@ -1,6 +1,9 @@
 export const STATUS_RU: Record<string, string> = {
   open: "открыта",
-  taken: "взята",
+  taken: "взята перевозчиком",
+  assigned: "борт назначен",
+  arrived: "на погрузке",
+  loading: "погрузка",
   pickup: "погрузка",
   transit: "в пути",
   delivered: "доставлена",
@@ -15,7 +18,8 @@ export const PLACE_KIND_RU: Record<string, string> = {
 };
 
 export const VEHICLE_STATUS_RU: Record<string, string> = {
-  idle: "свободна",
+  idle: "свободен",
+  assigned: "назначен",
   enroute: "в рейсе",
   loading: "погрузка",
 };

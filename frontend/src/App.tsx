@@ -71,7 +71,7 @@ function AppInner() {
           path="/dispatcher"
           element={user && isStaff(user.role) ? <Dispatcher /> : <Navigate to="/" />}
         />
-        <Route path="/driver" element={user?.role === "driver" ? <Driver /> : <Navigate to="/" />} />
+        <Route path="/driver" element={user?.role === "driver" ? <Driver user={user} /> : <Navigate to="/" />} />
       </Routes>
     </Layout>
   );

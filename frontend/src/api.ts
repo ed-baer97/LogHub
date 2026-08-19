@@ -23,6 +23,12 @@ export function clearSession() {
   localStorage.removeItem(USER);
 }
 
+export function streamUrl(path: string) {
+  const token = getToken();
+  const join = path.includes("?") ? "&" : "?";
+  return token ? `${path}${join}token=${encodeURIComponent(token)}` : path;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) {
