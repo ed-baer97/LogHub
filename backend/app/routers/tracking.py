@@ -1,19 +1,35 @@
 import json
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.access import can_read_vehicle, filter_fleet_event, get_driver_vehicle, require_roles
+from app.access import (
+    _driver_vehicle,
+    can_read_vehicle,
+    event_visible,
+    get_driver_vehicle,
+    require_roles,
+    sse_channels,
+    visible_vehicles_query,
+)
 from app.auth import get_current_user, user_id_from_token
 from app.database import SessionLocal, get_db
 from app.models import Order, TrackPoint, User, Vehicle
 from app.roles import DRIVER
 from app.schemas import TrackPingIn, VehicleIdIn
-from app.services.events import bus
-from app.services.simulator import clear_plan, mark_live, publish_vehicles, start_navigation
+from app.services.events import iter_channel_events, publish_order_event
+from app.services.live import persist_track
+from app.services.simulator import (
+    clear_plan,
+    fleet_snapshot,
+    mark_live,
+    publish_vehicle,
+    start_navigation,
+)
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"])
 
@@ -45,29 +61,27 @@ async def stream(
     db = SessionLocal()
     try:
         user = _user_from_token(db, authorization, token)
-        user_id = user.id
+        actor = SimpleNamespace(id=user.id, role=user.role)
+        channels = sse_channels(db, user)
+        board = _driver_vehicle(db, user)
+        driver_vid = board.id if board else None
+        snapshot = fleet_snapshot(db, visible_vehicles_query(db, user).all())
     finally:
         db.close()
 
     async def gen():
-        q = bus.subscribe()
+        from app.services.metrics import sse_close, sse_open
+
+        sse_open()
         try:
             yield f"data: {json.dumps({'type': 'hello'})}\n\n"
-            while True:
-                event = await q.get()
-                session = SessionLocal()
-                try:
-                    actor = session.get(User, user_id)
-                    if not actor:
-                        continue
-                    filtered = filter_fleet_event(actor, event, session)
-                finally:
-                    session.close()
-                if filtered is None:
+            yield f"data: {json.dumps(snapshot, default=str)}\n\n"
+            async for event in iter_channel_events(channels):
+                if not event_visible(actor, event, vehicle_id=driver_vid):
                     continue
-                yield f"data: {json.dumps(filtered, default=str)}\n\n"
+                yield f"data: {json.dumps(event, default=str)}\n\n"
         finally:
-            bus.unsubscribe(q)
+            sse_close()
 
     return StreamingResponse(
         gen(),
@@ -97,8 +111,9 @@ def _advance(db: Session, order: Order, expected: str, nxt: str, vehicle: Vehicl
     if vehicle is not None and vehicle_status:
         vehicle.status = vehicle_status
     db.commit()
-    bus.publish({"type": "order", "id": order.id, "status": nxt})
-    publish_vehicles(db)
+    publish_order_event(order, status=nxt)
+    if vehicle is not None:
+        publish_vehicle(db, vehicle)
     return order
 
 
@@ -133,14 +148,15 @@ def complete_route(body: VehicleIdIn, db: DbDep, user: DriverDep):
     if order.status != "transit":
         raise HTTPException(409, "Завершить можно только рейс в пути")
     clear_plan(v.id)
+    persist_track(db, v, "live", force=True)
     v.live_until = None
     v.status = "idle"
     v.current_order_id = None
     order.status = "delivered"
     order.delivered_at = datetime.utcnow()
     db.commit()
-    bus.publish({"type": "order", "id": order.id, "status": "delivered"})
-    publish_vehicles(db)
+    publish_order_event(order, status="delivered")
+    publish_vehicle(db, v)
     return {"ok": True}
 
 
@@ -150,20 +166,26 @@ def stop_route(body: VehicleIdIn, db: DbDep, user: DriverDep):
     if order.status != "transit":
         raise HTTPException(409, "Остановить можно только движение в пути")
     clear_plan(v.id)
+    persist_track(db, v, "nav", force=True)
     v.live_until = None
     v.status = "enroute"
     db.commit()
-    publish_vehicles(db)
+    publish_vehicle(db, v)
     return {"ok": True}
 
 
 @router.post("/ping")
 def ping(body: TrackPingIn, db: DbDep, user: DriverDep):
+    from app.services.live import acquire_ping_slot
+
     v = get_driver_vehicle(db, user, body.vehicle_id)
     mark_live(v, body.lat, body.lon)
-    db.add(TrackPoint(vehicle_id=v.id, lat=body.lat, lon=body.lon, source="live", ts=datetime.utcnow()))
+    if not acquire_ping_slot(v.id):
+        db.commit()
+        raise HTTPException(429, "Слишком часто")
+    persist_track(db, v, "live")
     db.commit()
-    publish_vehicles(db)
+    publish_vehicle(db, v)
     return {"ok": True, "lat": v.lat, "lon": v.lon}
 
 

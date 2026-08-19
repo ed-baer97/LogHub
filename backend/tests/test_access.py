@@ -1,5 +1,12 @@
 from fastapi.testclient import TestClient
 
+
+def _items(payload):
+    if isinstance(payload, dict) and "items" in payload:
+        return payload["items"]
+    return payload
+
+
 def _auth(client: TestClient, email: str, password: str = "secret") -> dict[str, str]:
     res = client.post("/api/auth/login", json={"email": email, "password": password})
     assert res.status_code == 200, res.text
@@ -61,7 +68,7 @@ def test_sender_isolation_and_open_only_mutate(client: TestClient, accounts):
     assert created.status_code == 200, created.text
     oid = created.json()["id"]
     assert client.get(f"/api/orders/{oid}", headers=s2).status_code == 404
-    mine = client.get("/api/orders", headers=s2).json()
+    mine = _items(client.get("/api/orders", headers=s2).json())
     assert all(o["id"] != oid for o in mine)
     assert client.post(f"/api/orders/{oid}/cancel", headers=s2).status_code == 404
 
@@ -102,8 +109,8 @@ def test_carrier_take_only_open_and_foreign_bort_404(client: TestClient, account
     assert bort.status_code == 200, bort.text
     vid = bort.json()["id"]
     assert client.patch(f"/api/fleet/borts/{vid}", headers=c2, json={"plate": "HACK"}).status_code == 404
-    assert client.get("/api/geo/vehicles", headers=c2).json() == []
-    assert client.get("/api/geo/vehicles", headers=s1).json() == []
+    assert _items(client.get("/api/geo/vehicles", headers=c2).json()) == []
+    assert _items(client.get("/api/geo/vehicles", headers=s1).json()) == []
 
     assigned = client.post(f"/api/orders/{oid}/assign", headers=c1, json={"vehicle_id": vid})
     assert assigned.status_code == 200, assigned.text
@@ -164,7 +171,7 @@ def test_delete_open_and_cancel_assigned_frees_bort(client: TestClient, accounts
     cancelled = client.post(f"/api/orders/{oid}/cancel", headers=s1)
     assert cancelled.status_code == 200, cancelled.text
     assert cancelled.json()["status"] == "cancelled"
-    fleet = client.get("/api/geo/vehicles", headers=c1).json()
+    fleet = _items(client.get("/api/geo/vehicles", headers=c1).json())
     unit = next(v for v in fleet if v["id"] == bort["id"])
     assert unit["current_order_id"] is None
     assert unit["status"] == "idle"
@@ -207,7 +214,7 @@ def test_carrier_edits_driver_and_password(client: TestClient, accounts):
     assert patched.json()["driver_name"] == "New Name"
     assert patched.json()["driver_email"] == "driver-edit2@test.kz"
     assert patched.json()["initial_password"] == "newpass"
-    listed = client.get("/api/geo/vehicles", headers=c1).json()
+    listed = _items(client.get("/api/geo/vehicles", headers=c1).json())
     unit = next(v for v in listed if v["id"] == vid)
     assert unit["driver_email"] == "driver-edit2@test.kz"
     assert unit.get("initial_password") in (None, "")
@@ -263,7 +270,7 @@ def test_driver_updates_own_profile(client: TestClient, accounts):
     assert patched.json()["phone"] == "+77001112233"
     assert "password" not in patched.json()
     assert client.post("/api/auth/login", json={"email": "driver-profile2@test.kz", "password": "newer"}).status_code == 200
-    fleet = client.get("/api/geo/vehicles", headers=c1).json()
+    fleet = _items(client.get("/api/geo/vehicles", headers=c1).json())
     unit = next(v for v in fleet if v["id"] == bort.json()["id"])
     assert unit["driver_name"] == "Асылбек"
 
@@ -295,10 +302,10 @@ def test_driver_sees_own_trip_history(client: TestClient, accounts):
     d = _auth(client, "driver-hist@test.kz")
     mine = client.get("/api/orders", headers=d)
     assert mine.status_code == 200, mine.text
-    ids = [o["id"] for o in mine.json()]
+    ids = [o["id"] for o in _items(mine.json())]
     assert order["id"] in ids
-    assert all(o["vehicle_id"] == bort["id"] for o in mine.json())
-    foreign = client.get("/api/orders", headers=_auth(client, "carrier2@test.kz")).json()
+    assert all(o["vehicle_id"] == bort["id"] for o in _items(mine.json()))
+    foreign = _items(client.get("/api/orders", headers=_auth(client, "carrier2@test.kz")).json())
     assert all(o["id"] != order["id"] or o["status"] == "open" for o in foreign)
 
 

@@ -1,16 +1,16 @@
-from datetime import datetime
-
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password
 from app.models import User, Vehicle
 from app.schemas import VehicleOut
+from app.services.live import apply_live, is_live
 
 
 def to_vehicle_out(v: Vehicle, initial_password: str | None = None) -> VehicleOut:
+    apply_live(v)
     item = VehicleOut.model_validate(v)
-    item.live = bool(v.live_until and v.live_until > datetime.utcnow())
+    item.live = is_live(v.id, v.live_until)
     driver = v.assigned_driver
     if driver:
         item.driver_email = driver.email

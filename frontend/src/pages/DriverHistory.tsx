@@ -3,7 +3,7 @@ import { MetricCard } from "../components/Charts";
 import DriverShell from "../components/DriverShell";
 import Empty from "../components/Empty";
 import { useToast } from "../components/Toast";
-import { api, errText } from "../api";
+import { apiList, errText } from "../api";
 import { formatKg } from "../lib/fleet";
 import { fmtNum } from "../lib/format";
 import { STATUS_RU } from "../lib/labels";
@@ -33,7 +33,7 @@ export default function DriverHistory() {
   const [orders, setOrders] = useState<Order[] | null>(null);
 
   useEffect(() => {
-    api<Order[]>("/api/orders")
+    apiList<Order>("/api/orders?limit=200")
       .then(setOrders)
       .catch((e) => {
         toast.err(errText(e));

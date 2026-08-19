@@ -3,9 +3,9 @@ import { BarList, ChartCard, DonutChart, MetricCard, SparkBars, ordersByDay, sta
 import Empty, { Skeleton } from "../components/Empty";
 import MapView from "../components/MapView";
 import { useToast } from "../components/Toast";
-import { api, errText, streamUrl } from "../api";
+import { api, apiList, errText, streamUrl } from "../api";
 import FleetBoard from "../components/FleetBoard";
-import { FLEET_STATUS_RU, fleetUiStatus, tripForVehicle } from "../lib/fleet";
+import { FLEET_STATUS_RU, fleetUiStatus, tripForVehicle, upsertVehicle } from "../lib/fleet";
 import { fmtNum } from "../lib/format";
 import { STATUS_RU } from "../lib/labels";
 import ProfileForm from "../components/ProfileForm";
@@ -58,8 +58,8 @@ export default function Carrier({ user, onUser }: { user: User; onUser: (user: U
   const load = useCallback(async () => {
     const [s, v, o] = await Promise.all([
       api<Settlement[]>("/api/geo/settlements"),
-      api<Vehicle[]>("/api/geo/vehicles"),
-      api<Order[]>("/api/orders"),
+      apiList<Vehicle>("/api/geo/vehicles?limit=200"),
+      apiList<Order>("/api/orders?limit=200"),
     ]);
     setSettlements(s);
     setVehicles(v);
@@ -82,6 +82,7 @@ export default function Carrier({ user, onUser }: { user: User; onUser: (user: U
     es.onmessage = (ev) => {
       const data = JSON.parse(ev.data);
       if (data.type === "fleet") setVehicles(data.vehicles ?? []);
+      if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data));
       if (data.type === "order" || data.type === "order_new") load().catch(() => undefined);
     };
     return () => es.close();

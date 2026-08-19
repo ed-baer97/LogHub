@@ -16,15 +16,18 @@ from app.access import (
     visible_orders_query,
 )
 from app.auth import get_current_user
+from app.config import settings
 from app.database import get_db
 from app.models import Order, User, Vehicle
-from app.roles import CARRIER, DRIVER, SENDER
-from app.schemas import OrderAssignIn, OrderCreate, OrderOut, OrderUpdate, QuoteOut, TakeOrderIn
-from app.services.events import bus
-from app.services.matching import match_for_vehicle, match_orders
+from app.paging import page_params, paginate
+from app.roles import CARRIER, SENDER
+from app.schemas import OrderAssignIn, OrderCreate, OrderOut, OrderUpdate, Page, QuoteOut, TakeOrderIn
+from app.services.cache import cache_get, cache_set
+from app.services.events import publish_order_event
+from app.services.matching import candidate_open_orders, match_for_vehicle, match_orders
 from app.services.osrm import ensure_route, get_cached_route, route_coords
 from app.services.pricing import price_model
-from app.services.simulator import publish_vehicles
+from app.services.simulator import publish_vehicle
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -82,40 +85,57 @@ async def quote(
     dest = get_usable_point(db, user, dest_id)
     if origin.id == dest.id:
         raise HTTPException(400, "Откуда и куда совпадают")
+    cache_key = f"quote:{origin.id}:{dest.id}:{weight_kg}:{cargo_type}"
+    cached = cache_get(cache_key)
+    if isinstance(cached, dict):
+        return QuoteOut(**cached)
     route = await ensure_route(db, origin, dest)
-    price = price_model.predict(route.distance_km, weight_kg, cargo_type)
-    return QuoteOut(
+    out = QuoteOut(
         distance_km=route.distance_km,
         duration_min=round(route.duration_s / 60, 0),
-        price_recommended=price,
+        price_recommended=price_model.predict(route.distance_km, weight_kg, cargo_type),
         geometry=route_coords(route),
     )
+    cache_set(cache_key, out.model_dump(), settings.cache_ttl_s)
+    return out
 
 
-@router.get("", response_model=list[OrderOut])
+@router.get("", response_model=Page[OrderOut])
 def list_orders(
     db: DbDep,
     user: UserDep,
+    paging: Annotated[tuple[int, int], Depends(page_params)],
     status: str | None = None,
 ):
+    limit, offset = paging
     q = visible_orders_query(db, user)
     if status:
         q = q.filter(Order.status == status)
-    rows = q.order_by(Order.id.desc()).all()
-    return [_out(o, _plate(db, o)) for o in rows]
+    rows, total, limit, offset = paginate(q, order_by=Order.id.desc(), limit=limit, offset=offset)
+    return Page(
+        items=[_out(o, _plate(db, o)) for o in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/hints/backhaul")
 def backhaul(db: DbDep, user: Annotated[User, Depends(require_roles(CARRIER))]):
-    open_orders = visible_orders_query(db, user).filter(Order.status == "open").all()
+    cache_key = f"hints:backhaul:{user.id}"
+    cached = cache_get(cache_key)
+    if isinstance(cached, list):
+        return cached
     fleet = db.query(Vehicle).filter(Vehicle.owner_id == user.id, Vehicle.active.is_(True)).all()
     best: dict[int, dict] = {}
     for v in fleet:
-        for h in match_for_vehicle(db, v, open_orders):
+        for h in match_for_vehicle(db, v):
             prev = best.get(h["order_id"])
             if not prev or h["empty_km_saved"] > prev["empty_km_saved"]:
                 best[h["order_id"]] = h
-    return list(best.values())
+    rows = list(best.values())
+    cache_set(cache_key, rows, min(20, settings.cache_ttl_s))
+    return rows
 
 
 @router.get("/hints/leg")
@@ -127,7 +147,7 @@ def leg_hints(
 ):
     origin = get_usable_point(db, user, origin_id)
     dest = get_usable_point(db, user, dest_id)
-    open_orders = visible_orders_query(db, user).filter(Order.status == "open").all()
+    open_orders = candidate_open_orders(db, user, origin, dest)
     return match_orders(db, origin, dest, open_orders)
 
 
@@ -165,7 +185,7 @@ async def create_order(
     db.add(o)
     db.commit()
     o = get_order_or_404(db, user, o.id)
-    bus.publish({"type": "order_new", "id": o.id})
+    publish_order_event(o, type="order_new", status="open")
     return _out(o)
 
 
@@ -214,8 +234,11 @@ def cancel_order(
     release_bort(db, o)
     o.status = "cancelled"
     db.commit()
-    bus.publish({"type": "order", "id": o.id, "status": "cancelled"})
-    publish_vehicles(db)
+    publish_order_event(o, status="cancelled")
+    if o.vehicle_id:
+        v = db.get(Vehicle, o.vehicle_id)
+        if v:
+            publish_vehicle(db, v)
     o = get_order_or_404(db, user, o.id)
     return _out(o)
 
@@ -230,9 +253,9 @@ def delete_order(
     if o.status != "open":
         raise HTTPException(409, "Удалить можно только заявку, которую ещё не взяли")
     oid = o.id
+    publish_order_event(o, status="deleted", order_id=oid)
     db.delete(o)
     db.commit()
-    bus.publish({"type": "order", "id": oid, "status": "deleted"})
     return {"ok": True}
 
 
@@ -250,7 +273,7 @@ def take_order(
     o.carrier_id = user.id
     o.taken_at = datetime.utcnow()
     db.commit()
-    bus.publish({"type": "order", "id": o.id, "status": "taken"})
+    publish_order_event(o, status="taken")
     o = get_order_or_404(db, user, o.id)
     return _out(o)
 
@@ -285,7 +308,8 @@ def assign_order(
     v = get_owned_vehicle(db, user, body.vehicle_id)
     _assign_to_vehicle(db, o, v)
     db.commit()
-    bus.publish({"type": "order", "id": o.id, "status": o.status})
+    publish_order_event(o, status=o.status)
+    publish_vehicle(db, v)
     o = get_order_or_404(db, user, o.id)
     return _out(o, v.plate)
 

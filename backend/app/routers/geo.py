@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,9 +6,10 @@ from sqlalchemy.orm import Session, joinedload
 from app.access import get_owned_point, require_roles, visible_settlements_query, visible_vehicles_query
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import Order, Settlement, User, Vehicle
+from app.models import Order, RouteCache, Settlement, User, Vehicle
+from app.paging import page_params, paginate
 from app.roles import SENDER
-from app.schemas import CorridorOut, SettlementCreate, SettlementOut, SettlementUpdate, VehicleOut
+from app.schemas import CorridorOut, Page, SettlementCreate, SettlementOut, SettlementUpdate, VehicleOut
 from app.services.fleet import to_vehicle_out
 from app.services.geo import load_coords
 from app.services.osrm import get_cached_route
@@ -135,12 +135,9 @@ def delete_settlement(
     return {"ok": True}
 
 
-@router.get("/vehicles", response_model=list[VehicleOut])
-def vehicles(db: DbDep, user: UserDep):
-    rows = (
-        visible_vehicles_query(db, user)
-        .options(joinedload(Vehicle.assigned_driver))
-        .order_by(Vehicle.plate)
-        .all()
-    )
-    return [to_vehicle_out(v) for v in rows]
+@router.get("/vehicles", response_model=Page[VehicleOut])
+def vehicles(db: DbDep, user: UserDep, paging: Annotated[tuple[int, int], Depends(page_params)]):
+    limit, offset = paging
+    q = visible_vehicles_query(db, user).options(joinedload(Vehicle.assigned_driver))
+    rows, total, limit, offset = paginate(q, order_by=Vehicle.plate, limit=limit, offset=offset)
+    return Page(items=[to_vehicle_out(v) for v in rows], total=total, limit=limit, offset=offset)

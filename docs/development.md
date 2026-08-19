@@ -9,13 +9,19 @@
 | `DATABASE_URL` | `sqlite:///./caspian.db` | PostgreSQL: `postgresql+psycopg://caspian:caspian@localhost:5432/caspian` |
 | `SECRET_KEY` | `caspian-hackathon-secret` | JWT и бывший SHA-256 |
 | `JWT_EXPIRE_HOURS` | `168` | срок токена (7 суток) |
-| `REDIS_URL` | пусто | `redis://localhost:6379/0`; пусто = шина SSE в памяти |
+| `REDIS_URL` | пусто | `redis://localhost:6379/0`; пусто = SSE и навигация в памяти |
+| `PING_MIN_INTERVAL_S` | `3` | лимит GPS ping |
+| `TRACK_FLUSH_S` | `20` | как часто писать точку в Postgres |
+| `TRACK_RETENTION_DAYS` | `14` | cron воркера чистит старые треки |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `10` / `20` | пул SQLAlchemy (не SQLite); в Compose 5 / 10 за PgBouncer |
+| `CACHE_TTL_S` | `45` | Redis-кэш quote и analytics summary |
+| `WEB_CONCURRENCY` | `2` | воркеры gunicorn в Docker |
 | `CORS_ORIGINS` | localhost:5173, :80, … | список через запятую; в `main` дополнительно `*` |
-| `OSRM_URL` | `https://router.project-osrm.org` | |
+| `OSRM_URL` | `https://router.project-osrm.org` | в Compose — `http://osrm:5000` |
 | `SIM_SPEED_KMH` | `420` | ускорение демо |
 | `SIM_TICK_S` | `1.5` | шаг симулятора |
 
-Compose задаёт `DATABASE_URL` на сервис `postgres`, `REDIS_URL`, `SECRET_KEY`, `CORS_ORIGINS`.
+Compose задаёт `DATABASE_URL` на PgBouncer, `REDIS_URL`, `OSRM_URL=http://osrm:5000`, `SECRET_KEY`, `CORS_ORIGINS`, `WEB_CONCURRENCY`.
 
 Не коммитить `.env` и `*.db` (см. `.gitignore`).
 
@@ -29,7 +35,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Зависимости
 
-Backend: FastAPI, uvicorn, SQLAlchemy, Alembic, psycopg, PyJWT, bcrypt, redis, pydantic-settings, httpx, numpy, pytest.
+Backend: FastAPI, uvicorn, gunicorn (Docker), SQLAlchemy, Alembic, ARQ, psycopg, PyJWT, bcrypt, redis, pydantic-settings, httpx, numpy, prometheus_client, pytest.
 
 Frontend: react, react-dom, react-router-dom, maplibre-gl. Скрипты: `npm run dev` / `build` / `preview`.
 
@@ -58,6 +64,9 @@ python -m pytest
 - заявки создаёт только отправитель.
 
 `tests/test_auth.py` — JWT при логине и перехеш старого SHA-256 в bcrypt.
+`tests/test_live.py` — фильтр SSE по роли, интервал ping/flush треков.
+`tests/test_stage3.py` — пагинация списков, bbox-матчинг, SQL-аналитика, downsample треков.
+`tests/test_stage4.py` — `/metrics`, `/api/analytics/ops`, счётчик SSE, партиции на SQLite не создаются.
 
 После смены access/роутов имеет смысл прогнать этот файл.
 
@@ -66,14 +75,14 @@ python -m pytest
 - **404 на чужие id** — не заменять на 403 в `get_order_or_404` / `get_owned_*`.
 - **Не пропускать статусы** — `_advance` сравнивает expected.
 - **Борт в UI = `vehicles` в БД.**
-- **Симулятор в RAM** — не включать несколько воркеров, пока follow-loop в процессе API.
+- **Симулятор:** при Redis — ARQ worker; в pytest — asyncio в API.
 - **Создание борта = создание водителя.** Один водитель — один борт (`attach_driver`).
 - Роль `dispatcher` нормализуется в `admin`.
 - Пароль в ответе только как `initial_password` при создании/сбросе, не из БД.
 
 ## Что сознательно не сделано
 
-Платежи, ЭЦП/SMS, натив, скоринг, тахографы, Celery, несколько инстансов API, GPS в Redis.
+Платежи, ЭЦП/SMS, натив, скоринг, тахографы, S3.
 
 Когда это понадобится и в каком порядке: [масштабирование бэкенда](scaling.md).
 

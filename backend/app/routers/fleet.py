@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,10 +7,11 @@ from app.access import get_owned_vehicle, require_roles
 from app.auth import hash_password
 from app.database import get_db
 from app.models import Settlement, User, Vehicle
+from app.paging import page_params, paginate
 from app.roles import CARRIER
-from app.schemas import BortCreate, BortUpdate, UserOut, VehicleOut
+from app.schemas import BortCreate, BortUpdate, Page, UserOut, VehicleOut
 from app.services.fleet import attach_driver, require_carrier, to_vehicle_out
-from app.services.simulator import publish_vehicles
+from app.services.simulator import publish_vehicle
 
 router = APIRouter(prefix="/api/fleet", tags=["fleet"])
 
@@ -41,17 +41,17 @@ def list_drivers(db: DbDep, user: CarrierDep):
     return [_user_out(d) for d in rows]
 
 
-@router.get("/vehicles", response_model=list[VehicleOut])
-def list_vehicles(db: DbDep, user: CarrierDep):
+@router.get("/vehicles", response_model=Page[VehicleOut])
+def list_vehicles(db: DbDep, user: CarrierDep, paging: Annotated[tuple[int, int], Depends(page_params)]):
     require_carrier(user)
-    rows = (
+    limit, offset = paging
+    q = (
         db.query(Vehicle)
         .options(joinedload(Vehicle.assigned_driver))
         .filter(Vehicle.owner_id == user.id)
-        .order_by(Vehicle.plate)
-        .all()
     )
-    return [_vehicle_out(v) for v in rows]
+    rows, total, limit, offset = paginate(q, order_by=Vehicle.plate, limit=limit, offset=offset)
+    return Page(items=[_vehicle_out(v) for v in rows], total=total, limit=limit, offset=offset)
 
 
 @router.post("/borts", response_model=VehicleOut)
@@ -93,7 +93,7 @@ def create_bort(body: BortCreate, db: DbDep, user: CarrierDep):
     db.add(v)
     db.commit()
     v = db.query(Vehicle).options(joinedload(Vehicle.assigned_driver)).filter(Vehicle.id == v.id).one()
-    publish_vehicles(db)
+    publish_vehicle(db, v)
     return _vehicle_out(v, body.driver_password)
 
 
@@ -143,7 +143,7 @@ def update_bort(vehicle_id: int, body: BortUpdate, db: DbDep, user: CarrierDep):
             driver.is_active = body.driver_active
     db.commit()
     v = db.query(Vehicle).options(joinedload(Vehicle.assigned_driver)).filter(Vehicle.id == v.id).one()
-    publish_vehicles(db)
+    publish_vehicle(db, v)
     return _vehicle_out(v, initial)
 
 
@@ -155,5 +155,5 @@ def disable_bort(vehicle_id: int, db: DbDep, user: CarrierDep):
     v.active = False
     db.commit()
     db.refresh(v)
-    publish_vehicles(db)
+    publish_vehicle(db, v)
     return _vehicle_out(v)

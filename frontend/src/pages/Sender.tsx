@@ -4,8 +4,8 @@ import Empty, { Skeleton } from "../components/Empty";
 import MapView from "../components/MapView";
 import OrderPanel from "../components/OrderPanel";
 import { useToast } from "../components/Toast";
-import { api, errText, streamUrl } from "../api";
-import { formatKg } from "../lib/fleet";
+import { api, apiList, errText, streamUrl } from "../api";
+import { formatKg, upsertVehicle } from "../lib/fleet";
 import { fmtNum, orderCode } from "../lib/format";
 import { PLACE_KIND_RU, STATUS_RU } from "../lib/labels";
 import ProfileForm from "../components/ProfileForm";
@@ -98,8 +98,8 @@ export default function Sender({ user, onUser }: { user: User; onUser: (user: Us
       setLoadError(null);
       const [s, o, v] = await Promise.all([
         api<Settlement[]>("/api/geo/settlements"),
-        api<Order[]>("/api/orders"),
-        api<Vehicle[]>("/api/geo/vehicles").catch(() => [] as Vehicle[]),
+        apiList<Order>("/api/orders?limit=200"),
+        apiList<Vehicle>("/api/geo/vehicles?limit=200").catch(() => [] as Vehicle[]),
       ]);
       setSettlements(s);
       setOrders(o);
@@ -120,8 +120,9 @@ export default function Sender({ user, onUser }: { user: User; onUser: (user: Us
     const es = new EventSource(streamUrl("/api/tracking/stream"));
     es.onmessage = (ev) => {
       try {
-        const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[] };
+        const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[]; id?: number };
         if (data.type === "fleet") setVehicles(data.vehicles ?? []);
+        if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data as Vehicle));
         if (data.type === "order" || data.type === "order_new") reload();
       } catch {
         /* keep last snapshot */

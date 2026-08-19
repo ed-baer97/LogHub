@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models import Order, RouteCache, Settlement, Vehicle
+from app.models import Order, RouteCache, Settlement, User, Vehicle
 from app.services.geo import distance_to_polyline_km, haversine_km
 from app.services.osrm import get_cached_route, route_coords
 
@@ -10,6 +11,7 @@ DIESEL_L_PER_100KM = 32.0
 DIESEL_KZT_PER_L = 295.0
 CORRIDOR_KM = 55.0
 MAX_DETOUR_KM = 90.0
+BBOX_PAD_DEG = 0.85
 
 
 def _dist(db: Session, a: Settlement, b: Settlement) -> float:
@@ -20,6 +22,30 @@ def _dist(db: Session, a: Settlement, b: Settlement) -> float:
     if cached_rev:
         return cached_rev.distance_km
     return haversine_km(a.lat, a.lon, b.lat, b.lon) * 1.32
+
+
+def candidate_open_orders(db: Session, user: User, origin: Settlement, dest: Settlement) -> list[Order]:
+    """Open orders whose origin or dest sits in the corridor bounding box."""
+    from app.access import visible_orders_query
+
+    min_lat = min(origin.lat, dest.lat) - BBOX_PAD_DEG
+    max_lat = max(origin.lat, dest.lat) + BBOX_PAD_DEG
+    min_lon = min(origin.lon, dest.lon) - BBOX_PAD_DEG
+    max_lon = max(origin.lon, dest.lon) + BBOX_PAD_DEG
+    box_ids = [
+        row[0]
+        for row in db.query(Settlement.id)
+        .filter(Settlement.lat.between(min_lat, max_lat), Settlement.lon.between(min_lon, max_lon))
+        .all()
+    ]
+    if not box_ids:
+        return []
+    return (
+        visible_orders_query(db, user)
+        .filter(Order.status == "open")
+        .filter(or_(Order.origin_id.in_(box_ids), Order.dest_id.in_(box_ids)))
+        .all()
+    )
 
 
 def match_orders(
@@ -88,16 +114,32 @@ def match_orders(
     return results
 
 
-def match_for_vehicle(db: Session, vehicle: Vehicle, open_orders: list[Order]) -> list[dict]:
-    home = vehicle.home
-    # Prefer current destination as origin of the empty return
+def _nearest_settlement(db: Session, vehicle: Vehicle) -> Settlement:
+    dlat = Settlement.lat - vehicle.lat
+    dlon = Settlement.lon - vehicle.lon
+    here = db.query(Settlement).order_by(dlat * dlat + dlon * dlon).first()
+    if here:
+        return here
+    home = vehicle.home or db.get(Settlement, vehicle.home_id)
+    if not home:
+        raise RuntimeError("у борта нет базы")
+    return home
+
+
+def match_for_vehicle(db: Session, vehicle: Vehicle, open_orders: list[Order] | None = None) -> list[dict]:
+    home = vehicle.home or db.get(Settlement, vehicle.home_id)
+    if not home:
+        return []
+    origin = home
     if vehicle.current_order_id:
         current = db.get(Order, vehicle.current_order_id)
         if current:
-            return match_orders(db, current.dest, home, open_orders)
-    # Idle truck: from current position nearest settlement toward home
-    here = min(
-        db.query(Settlement).all(),
-        key=lambda s: haversine_km(vehicle.lat, vehicle.lon, s.lat, s.lon),
-    )
-    return match_orders(db, here, home, open_orders)
+            origin = current.dest
+        else:
+            origin = _nearest_settlement(db, vehicle)
+    else:
+        origin = _nearest_settlement(db, vehicle)
+    if open_orders is None:
+        owner = db.get(User, vehicle.owner_id)
+        open_orders = candidate_open_orders(db, owner, origin, home) if owner else []
+    return match_orders(db, origin, home, open_orders)

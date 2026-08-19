@@ -17,6 +17,14 @@ export const FLEET_STATUS_RU: Record<FleetUiStatus, string> = {
   inactive: "Неактивен",
 };
 
+export function upsertVehicle(list: Vehicle[], row: Partial<Vehicle> & { id: number }): Vehicle[] {
+  const i = list.findIndex((v) => v.id === row.id);
+  if (i < 0) return [...list, row as Vehicle];
+  const next = list.slice();
+  next[i] = { ...list[i], ...row };
+  return next;
+}
+
 export function tripForVehicle(v: Vehicle, trips: Order[]): Order | undefined {
   if (!v.current_order_id) return undefined;
   return trips.find((o) => o.id === v.current_order_id);

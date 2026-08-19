@@ -250,29 +250,64 @@ def assert_bort_assignable(v: Vehicle, order: Order) -> None:
         raise HTTPException(400, "Груз тяжелее грузоподъёмности")
 
 
-def filter_fleet_event(user: User, event: dict, db: Session) -> dict | None:
+def sse_channels(db: Session, user: User) -> list[str]:
+    from app.services.events import ORDERS, STAFF, fleet_channel, sender_channel
+
+    r = role_of(user)
+    if is_staff(user.role):
+        return [STAFF, ORDERS]
+    if r == CARRIER:
+        return [fleet_channel(user.id), ORDERS]
+    if r == SENDER:
+        return [sender_channel(user.id), ORDERS]
+    if r == DRIVER:
+        v = _driver_vehicle(db, user)
+        if v:
+            return [fleet_channel(v.owner_id), ORDERS]
+        return [ORDERS]
+    return [ORDERS]
+
+
+def event_visible(user: User, event: dict, *, vehicle_id: int | None = None) -> bool:
     kind = event.get("type")
-    if kind == "fleet":
-        rows = event.get("vehicles") or []
-        kept = []
-        for item in rows:
-            vid = item.get("id")
-            v = db.get(Vehicle, vid) if vid else None
-            if v and can_read_vehicle(db, user, v):
-                kept.append(item)
-        return {**event, "vehicles": kept}
+    r = role_of(user)
+    if kind in {"hello", "fleet"}:
+        return True
     if kind == "vehicle":
-        vid = event.get("id")
-        v = db.get(Vehicle, vid) if vid else None
-        if v and can_read_vehicle(db, user, v):
-            return event
-        return None
+        if is_staff(user.role):
+            return True
+        if r == CARRIER:
+            return event.get("owner_id") == user.id
+        if r == DRIVER:
+            return event.get("driver_id") == user.id
+        if r == SENDER:
+            return event.get("sender_id") == user.id
+        return False
     if kind in {"order", "order_new"}:
-        oid = event.get("id")
-        if oid is None:
-            return event
-        order = db.get(Order, oid)
-        if order and can_read_order(db, user, order):
-            return event
+        if is_staff(user.role):
+            return True
+        if r == SENDER:
+            return event.get("sender_id") == user.id
+        if r == CARRIER:
+            if kind == "order_new" or event.get("status") == "open":
+                return True
+            return event.get("carrier_id") == user.id
+        if r == DRIVER:
+            return vehicle_id is not None and event.get("vehicle_id") == vehicle_id
+        return False
+    return True
+
+
+def filter_fleet_event(user: User, event: dict, db: Session) -> dict | None:
+    vid = None
+    if role_of(user) == DRIVER:
+        board = _driver_vehicle(db, user)
+        vid = board.id if board else None
+    if kind := event.get("type"):
+        if kind == "fleet":
+            rows = event.get("vehicles") or []
+            kept = [item for item in rows if event_visible(user, {**item, "type": "vehicle"}, vehicle_id=vid)]
+            return {**event, "vehicles": kept}
+    if not event_visible(user, event, vehicle_id=vid):
         return None
     return event

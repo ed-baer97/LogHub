@@ -1,3 +1,35 @@
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://caspian:caspian@pgbouncer:5432/caspian
+  SECRET_KEY: caspian-hackathon-secret
+  CORS_ORIGINS: http://localhost,http://localhost:80,http://localhost:5173,http://127.0.0.1
+  REDIS_URL: redis://redis:6379/0
+  OSRM_URL: http://osrm:5000
+  WEB_CONCURRENCY: "2"
+  DB_POOL_SIZE: "5"
+  DB_MAX_OVERFLOW: "10"
+
+x-backend: &backend
+  build: ./backend
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    pgbouncer:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    osrm:
+      condition: service_started
+  environment: *backend-env
+  restart: unless-stopped
+  expose:
+    - "8000"
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+    interval: 10s
+    timeout: 3s
+    retries: 8
+    start_period: 30s
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -5,6 +37,12 @@ services:
       POSTGRES_USER: caspian
       POSTGRES_PASSWORD: caspian
       POSTGRES_DB: caspian
+    command:
+      - postgres
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - log_checkpoints=on
     ports:
       - "5432:5432"
     volumes:
@@ -15,6 +53,26 @@ services:
       timeout: 5s
       retries: 10
 
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1-p3
+    environment:
+      DATABASE_URL: postgres://caspian:caspian@postgres:5432/caspian
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: session
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 25
+      MIN_POOL_SIZE: 2
+      LISTEN_PORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep pgbouncer >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     healthcheck:
@@ -23,29 +81,96 @@ services:
       timeout: 3s
       retries: 10
 
-  backend:
+  osrm:
+    image: osrm/osrm-backend:v5.27.1
+    volumes:
+      - osrmdata:/data
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ -f /data/kazakhstan-latest.osrm ]; then
+          exec osrm-routed --algorithm mld /data/kazakhstan-latest.osrm
+        fi
+        echo "OSRM graph missing. Run scripts/prepare-osrm.sh then: docker compose up -d osrm"
+        exec sleep infinity
+    restart: unless-stopped
+
+  migrate:
     build: ./backend
+    command: alembic upgrade head
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://caspian:caspian@postgres:5432/caspian
-      SECRET_KEY: caspian-hackathon-secret
-      CORS_ORIGINS: http://localhost,http://localhost:80,http://localhost:5173,http://127.0.0.1
-      REDIS_URL: redis://redis:6379/0
+    restart: "no"
+
+  backend:
+    <<: *backend
+
+  backend-2:
+    <<: *backend
+
+  worker:
+    build: ./backend
+    command: arq app.worker.WorkerSettings
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      osrm:
+        condition: service_started
+    environment: *backend-env
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
+    volumes:
+      - ./deploy/nginx-gateway.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "8000:8000"
+      - "8000:80"
     restart: unless-stopped
 
   frontend:
     build: ./frontend
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
     ports:
       - "80:80"
     restart: unless-stopped
 
+  backup:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: caspian
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      while true; do
+        ts=$$(date +%Y%m%d-%H%M);
+        pg_dump -h postgres -U caspian caspian | gzip > /backups/caspian-$$ts.sql.gz;
+        ls -1t /backups/caspian-*.sql.gz 2>/dev/null | tail -n +8 | while read f; do rm -f "$$f"; done;
+        sleep 86400;
+      done
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  osrmdata:
+    name: loghub_osrmdata

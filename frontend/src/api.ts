@@ -47,6 +47,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+export type Page<T> = { items: T[]; total: number; limit: number; offset: number };
+
+export async function apiList<T>(path: string, init: RequestInit = {}): Promise<T[]> {
+  const data = await api<T[] | Page<T>>(path, init);
+  if (Array.isArray(data)) return data;
+  return data?.items ?? [];
+}
+
 export function errText(err: unknown): string {
   return formatError(err);
 }

@@ -2,25 +2,23 @@
 
 Как устроен процесс сейчас — в [архитектуре](architecture.md) и [продакшене](deployment.md). Этот файл — очередь работ сверх текущего стенда.
 
-**Этап 1 в коде:** JWT, bcrypt, Alembic, Redis pub/sub для SSE. Gunicorn и вынос симулятора — нет.
+**Этапы 1–4 в коде:** JWT, Alembic, Redis, ARQ, пагинация, свой OSRM, две реплики API, PgBouncer, метрики, партиции треков.
 
 ```
-хакатон → 1 Redis/JWT/Alembic ✓ → 2 GPS+SSE → 3 пагинация/кэш/OSRM → 4 реплики
+хакатон → 1 Redis/JWT/Alembic ✓ → 2 GPS+SSE+ARQ ✓ → 3 пагинация/кэш/OSRM ✓ → 4 реплики ✓
 ```
 
-## Что сломается первым
+## Что сломается следующим
 
-Не FastAPI как фреймворк, а GPS/SSE и симулятор в одном процессе.
+Одновременные сессии закрыты репликами и пулом. Дальше — объём диска, объектное хранилище документов (в продукте загрузок ещё нет) и отдельный контур Grafana.
 
 | Узкое место | Где | Следствие |
 |-------------|-----|-----------|
-| План навигации в RAM | `_plan` / `_progress` / `_tasks` в `backend/app/services/simulator.py` | Второй инстанс «теряет» рейс в пути |
-| Снимок всего парка | `publish_vehicles` → событие `fleet` | На ping и каждый тик сима (1.5 с) всем SSE-клиентам уходит полный список машин |
-| БД на каждое SSE-событие | `GET /api/tracking/stream` в `backend/app/routers/tracking.py` | Новая сессия SQLAlchemy + ACL на каждый `fleet`/`vehicle` |
-| GPS → Postgres | `POST /api/tracking/ping` → INSERT `track_points` | Точки без TTL; тысяча бортов × ping раз в 5 с ≈ сотни тысяч строк в час |
-| Маршруты | публичный `router.project-osrm.org` | Лимиты и зависимость от внешней сети |
+| Треки старше окна retention | партиции + prune | рост диска, если cron молчит |
+| Нет S3 | вложения | файлы оказались бы на диске контейнера |
+| Один хост Compose | весь стек | нет failover площадки |
 
-Postgres и Redis в Docker Compose уже есть. Локальный SQLite (`caspian.db`) для нагрузки не подходит. Без `REDIS_URL` шина SSE снова только в памяти процесса.
+Локальный SQLite для нагрузки не подходит. Без `REDIS_URL` SSE и навигация снова в памяти процесса API.
 
 ## Этап 1 — Redis, JWT, Alembic
 
@@ -31,67 +29,52 @@ Postgres и Redis в Docker Compose уже есть. Локальный SQLite (
 - Alembic (`backend/alembic/`); `create_all` только при `TESTING=1`.
 - bcrypt; старый SHA-256 принимается и перехешируется на логине. `password_plain` в БД нет; `initial_password` только в ответе создания/сброса.
 
-Симулятор по-прежнему `asyncio.Task` в процессе API: SSE с другого воркера увидит события, но follow-loop останется там, где нажали «Выехать».
+Симулятор: ARQ `follow_vehicle` при Redis; иначе asyncio в API (pytest).
 
-**Не делать ещё:** gunicorn / `uvicorn --workers N`, пока навигация в API-процессе. Kafka, Kubernetes, отдельный tracking-сервис — рано.
+## Этап 2 — GPS в Redis, SSE дельтами, ARQ
 
-## Этап 2 — GPS в Redis, SSE дельтами, TTL треков
+Сделано.
 
-**Цель.** Сотни водителей онлайн: карта живая, Postgres не превращается в лог координат.
-
-**Добавить**
-
-- Живая позиция: Redis `vehicle:{id}` (lat/lon/heading/ts, TTL ~60 с). В Postgres — батч раз в 15–30 с или точка каждые N км / смена статуса.
-- Rate limit ping (например не чаще раза в 3–5 с на борт).
-- SSE: событие `vehicle` только по изменившемуся борту; каналы `fleet:{carrier_id}` / `order:{id}`, не глобальный broadcast. ACL при подписке, не на каждый тик из БД. Диспетчеру — snapshot + дельты, не полный JSON дважды в секунду.
-- Индекс `(vehicle_id, ts DESC)` на `track_points`, retention 7–30 дней, потом downsample.
-- Явный пул соединений SQLAlchemy под число воркеров.
-- Вынести follow-loop в воркер (ARQ/Celery), иначе горизонтальный API разъедет «кто ведёт машину».
-
-**Дальше можно**, когда ping не пишет каждую точку в Postgres и клиент не получает весь парк на каждый тик.
-
-**Не делать:** TimescaleDB и партиции «на всякий случай», пока объём треков не измерен.
+- Живая позиция `vehicle:pos:{id}`, TTL 60 с; `track_points` не чаще 20 с; ping 429 чаще 3 с.
+- SSE: снимок `fleet` на подключении, затем `vehicle`; каналы `loghub:staff` / `fleet:{id}` / `sender:{id}` / `orders`. ACL по полям события.
+- Индекс `ix_track_points_vehicle_ts`, prune старше 14 дней (cron воркера).
+- Пул Postgres `DB_POOL_SIZE` / `DB_MAX_OVERFLOW`.
+- Follow-loop в контейнере `worker` (`arq app.worker.WorkerSettings`).
 
 ## Этап 3 — пагинация, кэш, очередь, свой OSRM
 
-**Цель.** Тысячи заявок в сутки без `.all()` по истории и без упирания в публичный OSRM.
+Сделано.
 
-**Добавить**
-
-- Пагинация списков заявок и парка.
-- Кэш Redis: quote/маршрут, analytics summary на 30–60 с. `RouteCache` в БД уже есть.
-- Аналитика через `SUM`/`COUNT` в SQL, не загрузка всех `delivered` в Python.
-- Matching: сначала bbox/коридор в SQL, затем точный крюк по кандидатам.
-- Очередь (Redis + ARQ/Celery) для матчинга, префетча OSRM, downsample треков.
-- Свой OSRM в Compose вместо публичного роутера.
-
-Async SQLAlchemy — логичный шаг, когда SSE и GPS сидят на том же event loop; не первый приоритет.
-
-**Дальше можно**, когда тяжёлые эндпоинты не сканируют всю историю и маршруты не зависят от внешнего OSRM.
+- Списки заявок и парка: `{items, total, limit, offset}`, `limit` по умолчанию 100, максимум 200.
+- Кэш Redis 45 с: `quote`, analytics summary (ключи `super` / `staff`). `RouteCache` в БД как был. Хинты backhaul — до 20 с.
+- Аналитика: `SUM`/`COUNT`/`GROUP BY`, коридоры — топ-8 пар origin/dest в SQL.
+- Matching: сначала bbox ±0.85° вокруг origin/dest, затем прежний крюк по кандидатам.
+- ARQ: `prefetch_osrm` (KEY_PAIRS), `downsample_tracks` (1 точка/мин старше суток), плюс prune и follow.
+- OSRM в Compose (`osrm/osrm-backend`, volume `loghub_osrmdata`). Граф готовит `scripts/prepare-osrm.sh`. Пока файла нет — контейнер спит, API рисует прямую.
 
 ## Этап 4 — реплики, PgBouncer, метрики, партиции
 
-**Цель.** Тысячи одновременных сессий, предсказуемый p95.
+Сделано.
 
-**Добавить**
+- Nginx: gzip, `limit_req` 20 r/s, SSE без буфера (`/api/tracking/stream`, таймаут 3600 с). Реплики `backend` и `backend-2`, `least_conn`. Sticky sessions не нужны (JWT + Redis pub/sub).
+- Gateway на `:8000` — тот же upstream (Swagger, `/metrics`).
+- Gunicorn в Linux-контейнере: 2 × `UvicornWorker` на реплику, `--timeout 0` (иначе рвёт SSE). На Windows gunicorn нет — локально uvicorn.
+- Миграции один раз: сервис `migrate` (`alembic upgrade head` прямо в Postgres).
+- PgBouncer session pool; API и worker ходят через него. DDL — в `migrate` мимо пула. `prepare_threshold=None` у psycopg3.
+- Медленные запросы Postgres: `log_min_duration_statement=500`.
+- Бэкапы: контейнер `backup` раз в сутки в `./backups/`, плюс `scripts/backup-postgres.sh`.
+- Метрики: `GET /metrics` (Prometheus), `GET /api/analytics/ops` (staff). p95 — `histogram_quantile` по `loghub_http_request_seconds`; SSE, длина `arq:queue`, `count(track_points)`.
+- `track_points` в Postgres — RANGE по месяцу `ts`; воркер создаёт следующие месяцы и дропает старше retention. SQLite не секционируется.
+- Object storage не подключали: загрузок документов в продукте нет.
 
-- Nginx/Caddy: лимиты, gzip, таймауты SSE (`proxy_buffering off` уже намекает `X-Accel-Buffering`).
-- Две и более реплики backend (sticky sessions не нужны при JWT + Redis pub/sub).
-- PgBouncer, бэкапы, лог медленных запросов.
-- Метрики: p95, очередь Redis, размер `track_points`, число SSE-соединений.
-- Партиции треков (или TimescaleDB), когда объём это оправдывает.
-- Object storage для документов, не диск контейнера.
-
-**Не делать** на старте этапа: дробить монолит на микросервисы без отдельной причины.
+**Не делать дальше без причины:** микросервисы, TimescaleDB поверх уже помесячных партиций, Grafana, если метрик с `/metrics` хватает.
 
 ## Gunicorn
 
-JWT и SSE через Redis уже позволяют несколько процессов по HTTP. Включать gunicorn всё равно рано: симулятор в RAM.
-
-После этапа 2 (follow-loop вне API):
+В Docker уже так:
 
 ```bash
-gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8000
+gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8000 --timeout 0
 ```
 
-На 1–2 vCPU обычно 2–4 воркера. Альтернативы: `uvicorn --workers N` или несколько контейнеров backend. На Windows gunicorn не работает; в Linux-Docker — да.
+Две реплики × 2 воркера. На 1–2 vCPU не поднимайте `WEB_CONCURRENCY` без нужды — упираетесь в CPU и в PgBouncer. На Windows gunicorn не работает; в Linux-Docker — да.

@@ -86,7 +86,7 @@ Vehicle ── Order.vehicle_id / Vehicle.current_order_id
 
 ## `track_points`
 
-След борта. `source`: `nav` (симулятор), `live` (ping водителя), `sim` (по умолчанию в модели).
+След борта. `source`: `nav` (симулятор), `live` (ping водителя), `sim` (по умолчанию в модели). В Postgres таблица секционирована по месяцу `ts` (`PARTITION BY RANGE`); SQLite в тестах — обычная таблица. Индекс `(vehicle_id, ts)`.
 
 ## `route_cache`
 

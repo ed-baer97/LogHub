@@ -4,8 +4,8 @@ import MapView from "../components/MapView";
 import { BarList, ChartCard, DonutChart, MetricCard, SparkBars, ordersByDay, statusSlices } from "../components/Charts";
 import { useToast } from "../components/Toast";
 import ProfileForm from "../components/ProfileForm";
-import { api, errText, getStoredUser, streamUrl } from "../api";
-import { formatKg } from "../lib/fleet";
+import { api, apiList, errText, getStoredUser, streamUrl } from "../api";
+import { formatKg, upsertVehicle } from "../lib/fleet";
 import { deltaLabel, fmtNum, orderCode } from "../lib/format";
 import { STATUS_RU, VEHICLE_STATUS_RU } from "../lib/labels";
 import type { Analytics, Order, Settlement, User, Vehicle } from "../types";
@@ -71,12 +71,12 @@ export default function Dispatcher({ user, onUser }: { user: User; onUser: (user
       setLoadError(null);
       const base = Promise.all([
         api<Settlement[]>("/api/geo/settlements"),
-        api<Order[]>("/api/orders"),
+        apiList<Order>("/api/orders?limit=200"),
         api<User[]>("/api/admin/users"),
         api<Analytics>("/api/analytics/summary"),
       ]);
       if (isSuper) {
-        const [[s, o, u, a], v] = await Promise.all([base, api<Vehicle[]>("/api/geo/vehicles")]);
+        const [[s, o, u, a], v] = await Promise.all([base, apiList<Vehicle>("/api/geo/vehicles?limit=200")]);
         setSettlements(s);
         setOrders(o);
         setUsers(u);
@@ -119,7 +119,7 @@ export default function Dispatcher({ user, onUser }: { user: User; onUser: (user
         .then(setStats)
         .catch(() => undefined);
       if (!isSuper) {
-        api<Order[]>("/api/orders")
+        apiList<Order>("/api/orders?limit=200")
           .then(setOrders)
           .catch(() => undefined);
       }
@@ -132,8 +132,9 @@ export default function Dispatcher({ user, onUser }: { user: User; onUser: (user
     const es = new EventSource(streamUrl("/api/tracking/stream"));
     es.onmessage = (ev) => {
       try {
-        const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[] };
+        const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[]; id?: number };
         if (data.type === "fleet" && data.vehicles) setVehicles(data.vehicles);
+        if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data as Vehicle));
         if (data.type === "order") reload();
       } catch {
         /* keep last snapshot */

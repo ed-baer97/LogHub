@@ -2,118 +2,150 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import AsyncIterator
 from typing import Any
 
-from app.config import settings
+from app.services.redisutil import redis_enabled, sync_redis
 
-CHANNEL = "loghub:events"
+STAFF = "loghub:staff"
+ORDERS = "loghub:orders"
 
 
-def _use_redis() -> bool:
-    return bool(settings.redis_url.strip()) and not os.getenv("TESTING")
+def fleet_channel(owner_id: int) -> str:
+    return f"loghub:fleet:{owner_id}"
+
+
+def sender_channel(sender_id: int) -> str:
+    return f"loghub:sender:{sender_id}"
+
+
+def channels_for_event(event: dict[str, Any]) -> list[str]:
+    kind = event.get("type")
+    if kind == "vehicle":
+        ch = [STAFF]
+        owner = event.get("owner_id")
+        if owner:
+            ch.append(fleet_channel(int(owner)))
+        sender = event.get("sender_id")
+        if sender:
+            ch.append(sender_channel(int(sender)))
+        return ch
+    if kind in {"order", "order_new"}:
+        ch = [STAFF, ORDERS]
+        carrier = event.get("carrier_id")
+        if carrier:
+            ch.append(fleet_channel(int(carrier)))
+        sender = event.get("sender_id")
+        if sender:
+            ch.append(sender_channel(int(sender)))
+        return ch
+    return [STAFF, ORDERS]
+
+
+def publish_order_event(
+    order: Any,
+    *,
+    type: str = "order",
+    status: str | None = None,
+    order_id: int | None = None,
+) -> None:
+    oid = order_id if order_id is not None else getattr(order, "id", None)
+    payload = {
+        "type": type,
+        "id": oid,
+        "status": status if status is not None else getattr(order, "status", None),
+        "sender_id": getattr(order, "sender_id", None),
+        "carrier_id": getattr(order, "carrier_id", None),
+        "vehicle_id": getattr(order, "vehicle_id", None),
+    }
+    bus.publish(payload)
+
+
+class _Sub:
+    def __init__(self, channels: list[str]) -> None:
+        self.channels = set(channels)
+        self.q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
 
 
 class EventBus:
     def __init__(self) -> None:
-        self._subs: list[asyncio.Queue[dict[str, Any]]] = []
-        self._redis_sync: Any = None
-        self._redis_async: Any = None
-        self._listener: asyncio.Task[None] | None = None
+        self._subs: list[_Sub] = []
 
-    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
-        q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
-        self._subs.append(q)
-        return q
+    def subscribe(self, channels: list[str]) -> asyncio.Queue[dict[str, Any]]:
+        sub = _Sub(channels)
+        self._subs.append(sub)
+        return sub.q
 
     def unsubscribe(self, q: asyncio.Queue[dict[str, Any]]) -> None:
-        if q in self._subs:
-            self._subs.remove(q)
-
-    def _fanout(self, event: dict[str, Any]) -> None:
-        dead: list[asyncio.Queue[dict[str, Any]]] = []
-        for q in self._subs:
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                dead.append(q)
-        for q in dead:
-            self.unsubscribe(q)
-
-    def _ensure_sync(self) -> None:
-        if self._redis_sync is None:
-            import redis
-
-            self._redis_sync = redis.from_url(settings.redis_url, decode_responses=True)
+        self._subs = [s for s in self._subs if s.q is not q]
 
     def publish(self, event: dict[str, Any]) -> None:
-        if _use_redis():
+        channels = channels_for_event(event)
+        body = json.dumps(event, default=str)
+        r = sync_redis()
+        if r is not None:
             try:
-                self._ensure_sync()
-                self._redis_sync.publish(CHANNEL, json.dumps(event, default=str))
+                for ch in channels:
+                    r.publish(ch, body)
                 return
             except Exception:
                 pass
-        self._fanout(event)
+        wanted = set(channels)
+        dead: list[_Sub] = []
+        for sub in self._subs:
+            if not (sub.channels & wanted):
+                continue
+            try:
+                sub.q.put_nowait(event)
+            except asyncio.QueueFull:
+                dead.append(sub)
+        for sub in dead:
+            self.unsubscribe(sub.q)
 
     async def start(self) -> None:
-        if not _use_redis():
-            return
-        import redis.asyncio as redis_async
-
-        self._redis_async = redis_async.from_url(settings.redis_url, decode_responses=True)
-        self._ensure_sync()
-        self._listener = asyncio.create_task(self._listen())
+        return None
 
     async def stop(self) -> None:
-        if self._listener is not None:
-            self._listener.cancel()
-            try:
-                await self._listener
-            except asyncio.CancelledError:
-                pass
-            self._listener = None
-        if self._redis_async is not None:
-            await self._redis_async.aclose()
-            self._redis_async = None
-        if self._redis_sync is not None:
-            self._redis_sync.close()
-            self._redis_sync = None
-
-    async def _listen(self) -> None:
-        assert self._redis_async is not None
-        while True:
-            try:
-                pubsub = self._redis_async.pubsub()
-                await pubsub.subscribe(CHANNEL)
-                async for message in pubsub.listen():
-                    if message.get("type") != "message":
-                        continue
-                    data = message.get("data")
-                    if not data:
-                        continue
-                    try:
-                        event = json.loads(data)
-                    except (TypeError, json.JSONDecodeError):
-                        continue
-                    if isinstance(event, dict):
-                        self._fanout(event)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                await asyncio.sleep(1)
+        return None
 
 
 bus = EventBus()
 
 
-async def sse_stream() -> AsyncIterator[str]:
-    q = bus.subscribe()
+async def iter_channel_events(channels: list[str]) -> AsyncIterator[dict[str, Any]]:
+    if redis_enabled() and channels:
+        import redis.asyncio as redis_async
+        from app.config import settings
+
+        client = redis_async.from_url(settings.redis_url, decode_responses=True)
+        pubsub = client.pubsub()
+        await pubsub.subscribe(*channels)
+        try:
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                data = message.get("data")
+                if not data:
+                    continue
+                try:
+                    event = json.loads(data)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(event, dict):
+                    yield event
+        finally:
+            await pubsub.unsubscribe()
+            await client.aclose()
+        return
+
+    q = bus.subscribe(channels)
     try:
-        yield f"data: {json.dumps({'type': 'hello'})}\n\n"
         while True:
-            event = await q.get()
-            yield f"data: {json.dumps(event, default=str)}\n\n"
+            yield await q.get()
     finally:
         bus.unsubscribe(q)
+
+
+async def sse_stream() -> AsyncIterator[str]:
+    async for event in iter_channel_events([STAFF, ORDERS]):
+        yield f"data: {json.dumps(event, default=str)}\n\n"

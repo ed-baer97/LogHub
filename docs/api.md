@@ -122,25 +122,31 @@ Staff: супер-админ и админ. Создание и правки о�
 
 Борта в зоне видимости. `live` вычисляется по `live_until`.
 
+Пагинация: `?limit=100&offset=0` (`limit` 1–200). Ответ:
+
+```json
+{ "items": [], "total": 0, "limit": 100, "offset": 0 }
+```
+
 ---
 
 ## Orders `/api/orders`
 
 ### `GET /api/orders/quote?origin_id=&dest_id=&weight_kg=1000&cargo_type=general`
 
-Котировка: км, минуты, цена, geometry. 400 если origin = dest.
+Котировка: км, минуты, цена, geometry. 400 если origin = dest. При Redis ответ кэшируется ~45 с (`quote:{origin}:{dest}:{weight}:{cargo}`).
 
 ### `GET /api/orders`
 
-Опционально `?status=open`. Список по правилам видимости.
+Опционально `?status=open`. Список по правилам видимости. Пагинация как у `/api/geo/vehicles`: `{items, total, limit, offset}`.
 
 ### `GET /api/orders/hints/backhaul`
 
-Перевозчик. Попутки для своего активного парка vs открытые заявки.
+Перевозчик. Попутки для своего активного парка vs открытые заявки в bbox коридора борта. При Redis кэш до 20 с.
 
 ### `GET /api/orders/hints/leg?origin_id=&dest_id=`
 
-Перевозчик или отправитель. Попутки на конкретном плече.
+Перевозчик или отправитель. Попутки на конкретном плече. Сначала SQL-bbox ±0.85° вокруг origin/dest, затем точный крюк.
 
 ### `GET /api/orders/{id}`  
 ### `GET /api/orders/{id}/route`
@@ -190,7 +196,7 @@ Cancel: статусы из `CANCELLABLE`. Delete: `{ "ok": true }`.
 ### `GET /api/fleet/drivers`  
 ### `GET /api/fleet/vehicles`
 
-Свои водители / борт.
+Свои водители / борт. `/vehicles` — та же пагинация `{items, total, limit, offset}`.
 
 ### `POST /api/fleet/borts`
 
@@ -248,11 +254,19 @@ Cancel: статусы из `CANCELLABLE`. Delete: `{ "ok": true }`.
 
 ### `GET /api/analytics/summary` — staff
 
-Счётчики пунктов, бортов, открытых / в пути / доставленных заявок, загруженные км, экономия порожняка и топлива, топ коридоров.
+Счётчики пунктов, бортов, открытых / в пути / доставленных заявок, загруженные км, экономия порожняка и топлива, топ коридоров. Агрегаты в SQL. При Redis кэш ~45 с (ключи `analytics:summary:super` и `analytics:summary:staff`).
 
 Константы: дизель **32 л / 100 км**, **295 ₸/л**, порожний пробег без платформы **40%**.
 
 У админа (не супер-админ) из ответа убираются `empty_km_without_platform`, `empty_share_history`; `assumptions` пустой; `live_gps` = `null`.
+
+### `GET /api/analytics/ops` — staff
+
+Счётчики для эксплуатации: `track_points`, `sse_connections` (сумма по репликам при Redis), `arq_queue`, `instance`, размер пула SQLAlchemy.
+
+### `GET /metrics`
+
+Prometheus text (без JWT). Гистограмма HTTP (p95 в PromQL), `loghub_sse_connections` на процесс, `loghub_track_points`, `loghub_arq_queue_jobs`. Скрейпить с gateway `:8000/metrics`, не светить на публичный `:80`.
 
 ---
 

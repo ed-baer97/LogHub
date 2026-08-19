@@ -1,37 +1,38 @@
 # Архитектура
 
-LogHub — монорепозиторий: FastAPI + React. Один процесс API, без очереди задач. Движение борта — asyncio-задача на конкретный рейс.
+LogHub — монорепозиторий: FastAPI + React. Навигация рейса — ARQ-воркер (при `REDIS_URL`); в тестах — asyncio в процессе API.
 
 ## Стек
 
 | Слой | Технологии |
 |------|------------|
-| Backend | FastAPI 0.115, SQLAlchemy 2, Pydantic 2, uvicorn |
-| БД | PostgreSQL 16 (Docker) или SQLite локально, Alembic |
+| Backend | FastAPI 0.115, SQLAlchemy 2, Pydantic 2, gunicorn + uvicorn workers |
+| БД | PostgreSQL 16 (Docker) или SQLite локально, Alembic, PgBouncer |
 | Кэш / шина | Redis 7 (Docker); локально без `REDIS_URL` — in-memory |
 | Frontend | React 18, Vite 6, TypeScript, MapLibre GL, react-router-dom 6 |
-| Карта | тайлы OSM, маршруты публичного OSRM (`router.project-osrm.org`) |
+| Карта | тайлы OSM, маршруты OSRM (в Docker — свой `osrm`, локально по умолчанию публичный) |
 | Realtime | Server-Sent Events, Redis pub/sub (`EventBus`) |
-| Продакшен | Docker Compose: postgres + redis + backend + nginx |
+| Продакшен | Docker Compose: postgres + pgbouncer + redis + 2×backend + worker + gateway + nginx |
 
-Очереди Celery нет: симуляция едет внутри того же процесса, что и HTTP.
+Симуляция: ARQ (`arq app.worker.WorkerSettings`). Без Redis — задача в процессе API (pytest).
 
 ## Компоненты
 
 ```
-браузер ──► Vite (dev) / nginx (prod)
-              │  /api  → FastAPI :8000
-              │  SSE   → GET /api/tracking/stream
+браузер ──► Vite (dev) / nginx :80 (prod)
+              │  /api  → gateway :8000 / frontend nginx → backend + backend-2
+              │  SSE   → GET /api/tracking/stream (без буфера)
               ▼
-           FastAPI
+           FastAPI (gunicorn, 2 реплики)
               ├── JWT (HS256), bcrypt
               ├── auth, admin, geo, orders, fleet, tracking, analytics
               ├── access.py  — RBAC + ownership
-              ├── EventBus   — Redis pub/sub или память
-              ├── OSRM + RouteCache
-              └── simulator  — asyncio follow-loop на рейс
+              ├── EventBus   — каналы Redis или память
+              ├── live.py    — позиция в Redis, flush треков
+              ├── OSRM + RouteCache (Redis-кэш quote 45 с)
+              └── simulator  — план рейса; follow-loop в ARQ
               ▼
-           PostgreSQL / SQLite     Redis (опционально)
+           PgBouncer → PostgreSQL     Redis     ARQ worker     OSRM
 ```
 
 ## Дерево репозитория
@@ -48,36 +49,47 @@ backend/app/
   seed.py                 пункты Мангистау, супер-админ, кэш ключевых пар
   routers/                auth, admin, geo, orders, fleet, tracking, analytics
   services/
-    events.py             шина SSE
+    events.py             шина SSE (каналы staff/fleet/sender/orders)
+    live.py               живая GPS-точка, TTL треков
+    cache.py              Redis GET/SET JSON (quote, analytics)
+    metrics.py            Prometheus + счётчик SSE
+    tracks.py             месячные партиции track_points
     osrm.py               маршрут + fallback по прямой
-    matching.py           попутки / обратная загрузка
+    matching.py           bbox, затем попутки / обратная загрузка
     pricing.py            рекомендация цены
-    simulator.py          движение по polyline
+    simulator.py          старт рейса, payload борта
     fleet.py              борт ↔ водитель
     geo.py                haversine, проекция на линию
+  worker.py               ARQ: follow, prune, downsample, prefetch OSRM, партиции
+  paging.py               limit/offset для списков
 backend/alembic/          миграции
 backend/tests/            матрица доступа
 frontend/src/
   pages/                  Landing, Sender, Carrier, Driver, Dispatcher
   components/             Layout, MapView, FleetBoard, OrderPanel, Toast
 docker-compose.yml
+deploy/nginx-gateway.conf
 scripts/deploy-linux.sh
+scripts/prepare-osrm.sh
+scripts/backup-postgres.sh
 ```
 
 ## Процессы при старте
 
-1. Вне тестов схема накатывается Alembic (`alembic upgrade head` в Docker CMD и локально).
+1. Вне тестов схема накатывается Alembic (сервис `migrate` в Docker; локально `alembic upgrade head`).
 2. Pytest: `TESTING=1` → `create_all` на временный SQLite, сид не гоняется.
 3. `ensure_schema` — лёгкие `ALTER` для старых БД (в том числе сброс `password_plain`).
 4. Если справочник пуст — сид пунктов, супер-админ, кэш маршрутов по ключевым парам (Актау–Жанаозен и др.).
 5. `price_model.fit` — линейная регрессия по `historical_trips` или запасные коэффициенты.
-6. Если задан `REDIS_URL` — слушатель pub/sub для SSE.
+6. При `REDIS_URL` SSE слушает каналы роли; навигация ставится в ARQ.
 
 ## Realtime
 
 `GET /api/tracking/stream` — SSE. Токен: заголовок `Authorization: Bearer …` или query `?token=`.
 
-При `REDIS_URL` публикация идёт в канал `loghub:events`; каждый процесс API раздаёт локальным подписчикам. Без Redis (pytest, локальный uvicorn) — очередь в памяти процесса.
+Первое событие после `hello` — снимок `fleet` (видимые борты, координаты из Redis если есть). Дальше только `vehicle` и `order`. Фильтр по `owner_id` / `driver_id` / `sender_id` без запроса в БД на каждый тик.
+
+Каналы Redis: `loghub:staff`, `loghub:fleet:{carrier_id}`, `loghub:sender:{sender_id}`, `loghub:orders`. Без Redis — те же каналы в памяти процесса.
 
 События:
 
@@ -88,8 +100,6 @@ scripts/deploy-linux.sh
 | `vehicle` | ping / живая точка | координаты одного борта |
 | `order` / `order_new` | смена заявки | `id`, `status` |
 
-Перед отправкой событие режется в `filter_fleet_event`: клиент видит только свои борты и заявки. Админ и супер-админ видят всё.
-
 Очередь подписчика — 200 событий; при переполнении клиент отключается (нужно переподключиться).
 
 ## Маршруты
@@ -98,19 +108,21 @@ scripts/deploy-linux.sh
 2. Иначе запрос к OSRM (`overview=full`, GeoJSON), таймаут 8 с.
 3. Если OSRM недоступен — прямая с коэффициентом 1.32 и интерполяцией точек.
 
+В Compose `OSRM_URL=http://osrm:5000`. Пока граф не собран (`scripts/prepare-osrm.sh`), контейнер `osrm` не слушает порт — срабатывает шаг 3. Локальный uvicorn без Compose по умолчанию ходит на `router.project-osrm.org`.
+
 Смена координат своей точки отправителя сбрасывает кэш маршрутов, где эта точка — origin или dest.
 
 ## Движение борта
 
 Маршрут и анимация включаются только на этапе `transit` (кнопка водителя «Выехать»).
 
-- Polyline кладётся в память (`_plan`).
-- Цикл тикает каждые `sim_tick_s` (1.5 с) со скоростью `sim_speed_kmh` (420 км/ч — ускорение для демо).
-- Точки пишутся в `track_points` с `source=nav`.
-- Если водитель шлёт GPS (`POST /api/tracking/ping`), `live_until` держится 45 с и симулятор не двигает борт.
+- План в Redis (`nav:plan:{id}`) или в памяти без Redis.
+- Цикл (ARQ `follow_vehicle` или asyncio) тикает каждые `sim_tick_s` (1.5 с).
+- Живая точка: Redis `vehicle:pos:{id}`, TTL 60 с. В `track_points` — не чаще чем раз в `TRACK_FLUSH_S` (20 с).
+- Ping чаще 3 с → 429; позиция в Redis всё равно обновляется. Симулятор не двигает борт, пока GPS live.
 - По концу polyline заявка становится `delivered`, борт — `idle` (то же делает «Завершить рейс»).
 
-GPS с телефона необязателен. Follow-loop живёт в том процессе API, где нажали «Выехать» — несколько воркеров пока не включают.
+GPS с телефона необязателен. При Redis follow-loop в отдельном контейнере `worker`.
 
 ## Аутентификация
 
@@ -122,6 +134,6 @@ JWT HS256, `sub` = id пользователя, срок `JWT_EXPIRE_HOURS` (п�
 
 ## Границы MVP
 
-Нет: платежи, ЭЦП / SMS, нативное приложение, скоринг перевозчиков, тахографы, Celery, горизонтальное масштабирование API (симулятор в процессе).
+Нет: платежи, ЭЦП / SMS, нативное приложение, скоринг перевозчиков, тахографы, S3 для документов.
 
-Очередь работ: [масштабирование бэкенда](scaling.md). Этап 1 (Redis, JWT, Alembic) уже в коде.
+Очередь работ: [масштабирование бэкенда](scaling.md). Этапы 1–4 в коде.

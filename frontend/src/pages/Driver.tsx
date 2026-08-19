@@ -3,7 +3,7 @@ import MapView from "../components/MapView";
 import DriverShell from "../components/DriverShell";
 import { useHeaderHint } from "../components/headerHint";
 import { useToast } from "../components/Toast";
-import { api, errText, streamUrl } from "../api";
+import { api, apiList, errText, streamUrl } from "../api";
 import { DRIVER_STAGE_RU } from "../lib/labels";
 import { formatKg, kindLabel, kmBetween } from "../lib/fleet";
 import type { Order, Settlement, User, Vehicle } from "../types";
@@ -69,7 +69,7 @@ export default function Driver({ user }: { user: User }) {
   useHeaderHint(vehicle ? vehicle.plate : null);
 
   const loadFleet = useCallback(async () => {
-    const rows = await api<Vehicle[]>("/api/geo/vehicles");
+    const rows = await apiList<Vehicle>("/api/geo/vehicles?limit=200");
     const mine = rows.find((v) => v.driver_id === user.id) ?? null;
     setVehicle(mine);
     return mine;
@@ -90,6 +90,9 @@ export default function Driver({ user }: { user: User }) {
         const rows = data.vehicles as Vehicle[];
         const mine = rows.find((v) => v.driver_id === user.id);
         if (mine) setVehicle(mine);
+      }
+      if (data.type === "vehicle" && data.driver_id === user.id) {
+        setVehicle((prev) => (prev ? { ...prev, ...data } : (data as Vehicle)));
       }
       if (data.type === "order" || data.type === "order_new") {
         loadFleet().catch(() => undefined);
@@ -156,7 +159,12 @@ export default function Driver({ user }: { user: User }) {
             }),
           });
           setGeoOn(true);
-        } catch {
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "";
+          if (msg.includes("Слишком часто") || msg.includes("429")) {
+            setGeoOn(true);
+            return;
+          }
           setGeoOn(false);
         }
       },

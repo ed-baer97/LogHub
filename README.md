@@ -57,10 +57,10 @@ open / taken / assigned → cancelled
 
 ## Стек
 
-- Backend: FastAPI, SQLAlchemy 2, Alembic, PostgreSQL (Docker) или SQLite локально, JWT, SSE
+- Backend: FastAPI, SQLAlchemy 2, Alembic, PostgreSQL (Docker) или SQLite локально, JWT, SSE, gunicorn в Compose
 - Frontend: React 18, Vite, MapLibre GL
-- Маршруты: публичный OSRM, кэш в БД
-- Redis в Docker — pub/sub для SSE. Движение борта — задача в процессе API. Дальше: [docs/scaling.md](docs/scaling.md)
+- Маршруты: OSRM (в Docker — свой контейнер, локально по умолчанию публичный), кэш в БД
+- Redis в Docker — SSE, GPS, кэш. Две реплики API за nginx, PgBouncer. Дальше: [docs/scaling.md](docs/scaling.md)
 
 ## Локальный запуск
 
