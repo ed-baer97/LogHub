@@ -1,17 +1,11 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Empty, { Skeleton } from "../components/Empty";
 import MapView from "../components/MapView";
 import { useToast } from "../components/Toast";
 import { api, errText, streamUrl } from "../api";
-import { STATUS_RU, VEHICLE_STATUS_RU } from "../lib/labels";
+import FleetBoard from "../components/FleetBoard";
+import { STATUS_RU } from "../lib/labels";
 import type { MatchHint, Order, Settlement, User, Vehicle } from "../types";
-
-const VEHICLE_KINDS = [
-  { id: "tent", label: "тент" },
-  { id: "reefer", label: "рефрижератор" },
-  { id: "dump", label: "самосвал" },
-  { id: "flatbed", label: "площадка" },
-];
 
 type Tab = "dash" | "feed" | "mine" | "fleet";
 type Info = "open" | "trips" | "fleet" | "live" | "transit";
@@ -194,7 +188,16 @@ export default function Carrier({ user }: { user: User }) {
 
       {tab === "fleet" && (
         <div className="super-body">
-          <FleetPanel user={user} vehicles={mineFleet} settlements={settlements} reload={load} />
+          <FleetBoard
+            vehicles={mineFleet}
+            trips={myTrips}
+            settlements={settlements}
+            reload={load}
+            onOpenTrip={() => {
+              setInfo(null);
+              setTab("mine");
+            }}
+          />
         </div>
       )}
     </div>
@@ -411,7 +414,13 @@ function CarrierInfo({
         />
       )}
       {boards && (
-        <FleetTable vehicles={boards} settlements={settlements} reload={onReload} />
+        <FleetBoard
+          compact
+          vehicles={boards}
+          trips={trips}
+          settlements={settlements}
+          reload={onReload}
+        />
       )}
     </div>
   );
@@ -794,316 +803,5 @@ function OrdersTable({
         })}
       </tbody>
     </table>
-  );
-}
-
-function FleetTable({
-  vehicles,
-  settlements,
-  reload,
-}: {
-  vehicles: Vehicle[];
-  settlements: Settlement[];
-  reload: () => Promise<void>;
-}) {
-  const toast = useToast();
-  const bases = settlements.filter((s) => !s.sender_id);
-  const [editId, setEditId] = useState<number | null>(null);
-  const [edit, setEdit] = useState({
-    plate: "",
-    kind: "tent",
-    capacity_kg: 10000,
-    home_id: 0,
-    driver_name: "",
-    driver_email: "",
-    driver_phone: "",
-    driver_password: "",
-    driver_active: true,
-  });
-
-  function openEdit(v: Vehicle) {
-    setEditId(v.id);
-    setEdit({
-      plate: v.plate,
-      kind: v.kind,
-      capacity_kg: v.capacity_kg,
-      home_id: v.home_id,
-      driver_name: v.driver_name,
-      driver_email: v.driver_email ?? "",
-      driver_phone: v.driver_phone ?? "",
-      driver_password: "",
-      driver_active: v.driver_active !== false,
-    });
-  }
-
-  async function saveEdit(e: FormEvent) {
-    e.preventDefault();
-    if (editId == null) return;
-    try {
-      const body: Record<string, unknown> = {
-        plate: edit.plate,
-        kind: edit.kind,
-        capacity_kg: edit.capacity_kg,
-        home_id: edit.home_id,
-        driver_name: edit.driver_name,
-        driver_email: edit.driver_email,
-        driver_phone: edit.driver_phone || null,
-        driver_active: edit.driver_active,
-      };
-      if (edit.driver_password.trim()) body.driver_password = edit.driver_password.trim();
-      const saved = await api<Vehicle>(`/api/fleet/borts/${editId}`, {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      });
-      toast.ok(
-        saved.initial_password
-          ? `Сохранено. Новый пароль водителя: ${saved.initial_password}`
-          : "Борт и водитель обновлены"
-      );
-      setEditId(null);
-      await reload();
-    } catch (ex) {
-      toast.err(errText(ex));
-    }
-  }
-
-  if (vehicles.length === 0) return <Empty title="Нет бортов" />;
-  return (
-    <div className="card-list">
-      {vehicles.map((v) => (
-        <div className="card" key={v.id}>
-          {editId === v.id ? (
-            <form className="grid" onSubmit={saveEdit}>
-              <label>
-                Госномер
-                <input required value={edit.plate} onChange={(e) => setEdit({ ...edit, plate: e.target.value })} />
-              </label>
-              <label>
-                Тип
-                <select value={edit.kind} onChange={(e) => setEdit({ ...edit, kind: e.target.value })}>
-                  {VEHICLE_KINDS.map((k) => (
-                    <option key={k.id} value={k.id}>
-                      {k.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                кг
-                <input
-                  type="number"
-                  value={edit.capacity_kg}
-                  onChange={(e) => setEdit({ ...edit, capacity_kg: Number(e.target.value) })}
-                />
-              </label>
-              <label>
-                База
-                <select value={edit.home_id} onChange={(e) => setEdit({ ...edit, home_id: Number(e.target.value) })}>
-                  {bases.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Водитель
-                <input required value={edit.driver_name} onChange={(e) => setEdit({ ...edit, driver_name: e.target.value })} />
-              </label>
-              <label>
-                Email
-                <input
-                  required
-                  type="email"
-                  value={edit.driver_email}
-                  onChange={(e) => setEdit({ ...edit, driver_email: e.target.value })}
-                />
-              </label>
-              <label>
-                Телефон
-                <input value={edit.driver_phone} onChange={(e) => setEdit({ ...edit, driver_phone: e.target.value })} />
-              </label>
-              <label>
-                Новый пароль
-                <input
-                  placeholder="оставьте пустым, если не менять"
-                  value={edit.driver_password}
-                  onChange={(e) => setEdit({ ...edit, driver_password: e.target.value })}
-                />
-              </label>
-              <label>
-                Учётка водителя
-                <select
-                  value={edit.driver_active ? "1" : "0"}
-                  onChange={(e) => setEdit({ ...edit, driver_active: e.target.value === "1" })}
-                >
-                  <option value="1">активна</option>
-                  <option value="0">заблокирована</option>
-                </select>
-              </label>
-              <div className="row-actions">
-                <button className="btn small" type="submit">
-                  Сохранить
-                </button>
-                <button type="button" className="btn small secondary" onClick={() => setEditId(null)}>
-                  Отмена
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <h3>
-                {v.plate} · {v.driver_name}
-              </h3>
-              <div className="meta">
-                <span>{v.driver_email ?? "нет email"}</span>
-                {v.driver_phone ? <span>{v.driver_phone}</span> : null}
-                <span>{v.capacity_kg} кг</span>
-                <span>{v.active === false ? "борт отключён" : VEHICLE_STATUS_RU[v.status] ?? v.status}</span>
-                <span>{v.driver_active === false ? "водитель блок" : "водитель активен"}</span>
-              </div>
-              <div className="row-actions">
-                <button type="button" className="btn small" onClick={() => openEdit(v)}>
-                  Изменить
-                </button>
-                {v.active !== false && !v.current_order_id ? (
-                  <button
-                    type="button"
-                    className="btn small dust"
-                    onClick={() =>
-                      api(`/api/fleet/borts/${v.id}/disable`, { method: "POST", body: "{}" })
-                        .then(() => reload())
-                        .catch((ex) => toast.err(errText(ex)))
-                    }
-                  >
-                    Отключить борт
-                  </button>
-                ) : null}
-              </div>
-            </>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function FleetPanel({
-  user,
-  vehicles,
-  settlements,
-  reload,
-}: {
-  user: User;
-  vehicles: Vehicle[];
-  settlements: Settlement[];
-  reload: () => Promise<void>;
-}) {
-  const toast = useToast();
-  const bases = settlements.filter((s) => !s.sender_id);
-  const [form, setForm] = useState({
-    plate: "",
-    kind: "tent",
-    capacity_kg: 10000,
-    home_id: 0,
-    driver_name: "",
-    driver_email: "",
-    driver_phone: "",
-    driver_password: "demo",
-  });
-
-  useEffect(() => {
-    setForm((f) => ({ ...f, home_id: f.home_id || bases[0]?.id || 0 }));
-  }, [bases]);
-
-  async function addBort(e: FormEvent) {
-    e.preventDefault();
-    try {
-      const created = await api<Vehicle>("/api/fleet/borts", { method: "POST", body: JSON.stringify(form) });
-      toast.ok(
-        created.initial_password
-          ? `Борт ${created.plate} создан. Пароль водителя: ${created.initial_password}`
-          : `Борт ${created.plate} создан`
-      );
-      setForm({ ...form, plate: "", driver_name: "", driver_email: "", driver_phone: "" });
-      await reload();
-    } catch (ex) {
-      toast.err(errText(ex));
-    }
-  }
-
-  const createForm = (
-    <div className="card">
-      <h3>Новый борт</h3>
-      <p className="lede">Водитель и машина — одна единица. Отключённый борт на рейс не ставится.</p>
-      <form className="grid" onSubmit={addBort}>
-        <label>
-          Госномер
-          <input required value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value })} />
-        </label>
-        <label>
-          Тип
-          <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
-            {VEHICLE_KINDS.map((k) => (
-              <option key={k.id} value={k.id}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Грузоподъёмность, кг
-          <input
-            type="number"
-            value={form.capacity_kg}
-            onChange={(e) => setForm({ ...form, capacity_kg: Number(e.target.value) })}
-          />
-        </label>
-        <label>
-          База
-          <select value={form.home_id} onChange={(e) => setForm({ ...form, home_id: Number(e.target.value) })}>
-            {bases.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Водитель
-          <input required value={form.driver_name} onChange={(e) => setForm({ ...form, driver_name: e.target.value })} />
-        </label>
-        <label>
-          Email водителя
-          <input
-            required
-            type="email"
-            value={form.driver_email}
-            onChange={(e) => setForm({ ...form, driver_email: e.target.value })}
-          />
-        </label>
-        <label>
-          Телефон
-          <input value={form.driver_phone} onChange={(e) => setForm({ ...form, driver_phone: e.target.value })} />
-        </label>
-        <button className="btn" type="submit">
-          Создать борт
-        </button>
-      </form>
-    </div>
-  );
-
-  return (
-    <div>
-      <h2 className="display cabinet-title" style={{ display: "block", fontSize: 28, marginBottom: 8 }}>
-        Парк {user.company ? `· ${user.company}` : ""}
-      </h2>
-      <div className="admin-cols" style={{ marginTop: 16 }}>
-        {createForm}
-        <div>
-          <FleetTable vehicles={vehicles} settlements={settlements} reload={reload} />
-        </div>
-      </div>
-    </div>
   );
 }

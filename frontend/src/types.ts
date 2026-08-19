@@ -68,6 +68,7 @@ export type Order = {
   empty_km_saved: number;
   is_backhaul: boolean;
   created_at?: string | null;
+  delivered_at?: string | null;
   origin_lat: number;
   origin_lon: number;
   dest_lat: number;

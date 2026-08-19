@@ -7,15 +7,61 @@ from sqlalchemy.orm import Session, joinedload
 from app.access import get_owned_point, require_roles, visible_settlements_query, visible_vehicles_query
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import Order, RouteCache, Settlement, User, Vehicle
+from app.models import Order, Settlement, User, Vehicle
 from app.roles import SENDER
-from app.schemas import SettlementCreate, SettlementOut, SettlementUpdate, VehicleOut
+from app.schemas import CorridorOut, SettlementCreate, SettlementOut, SettlementUpdate, VehicleOut
 from app.services.fleet import to_vehicle_out
+from app.services.geo import load_coords
+from app.services.osrm import get_cached_route
+
+DEMO_CORRIDORS = [
+    ("Актау", "Жанаозен"),
+    ("Актау", "Шетпе"),
+    ("Шетпе", "Бейнеу"),
+    ("Актау", "Форт-Шевченко"),
+    ("Актау", "Курык"),
+    ("Жанаозен", "Шетпе"),
+]
 
 router = APIRouter(prefix="/api/geo", tags=["geo"])
 
 DbDep = Annotated[Session, Depends(get_db)]
 UserDep = Annotated[User, Depends(get_current_user)]
+
+
+@router.get("/catalog", response_model=list[SettlementOut])
+def catalog(db: DbDep):
+    """Публичный справочник пунктов платформы (без точек отправителей)."""
+    return (
+        db.query(Settlement)
+        .filter(Settlement.sender_id.is_(None))
+        .order_by(Settlement.kind, Settlement.name)
+        .all()
+    )
+
+
+@router.get("/corridors", response_model=list[CorridorOut])
+def corridors(db: DbDep):
+    """Демо-маршруты лендинга: геометрия из кэша OSRM, без операционных данных."""
+    by_name = {
+        s.name: s
+        for s in db.query(Settlement).filter(Settlement.sender_id.is_(None)).all()
+    }
+    out: list[CorridorOut] = []
+    for a_name, b_name in DEMO_CORRIDORS:
+        a, b = by_name.get(a_name), by_name.get(b_name)
+        if not a or not b:
+            continue
+        row = get_cached_route(db, a.id, b.id) or get_cached_route(db, b.id, a.id)
+        if not row:
+            continue
+        coords = load_coords(row.geometry)
+        if len(coords) < 2:
+            continue
+        if row.origin_id != a.id:
+            coords = list(reversed(coords))
+        out.append(CorridorOut(id=f"{a_name}-{b_name}", origin=a_name, dest=b_name, coords=coords))
+    return out
 
 
 @router.get("/settlements", response_model=list[SettlementOut])

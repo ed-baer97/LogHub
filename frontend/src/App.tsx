@@ -9,6 +9,8 @@ import { isStaff } from "./types";
 import Carrier from "./pages/Carrier";
 import Dispatcher from "./pages/Dispatcher";
 import Driver from "./pages/Driver";
+import DriverHistory from "./pages/DriverHistory";
+import DriverProfilePage from "./pages/DriverProfilePage";
 import Landing from "./pages/Landing";
 import Sender from "./pages/Sender";
 
@@ -54,6 +56,7 @@ function AppInner() {
       onLogout={logout}
       loginOpen={loginOpen}
       setLoginOpen={setLoginOpen}
+      hideChrome={!user}
     >
       <Routes>
         <Route
@@ -72,6 +75,14 @@ function AppInner() {
           element={user && isStaff(user.role) ? <Dispatcher /> : <Navigate to="/" />}
         />
         <Route path="/driver" element={user?.role === "driver" ? <Driver user={user} /> : <Navigate to="/" />} />
+        <Route
+          path="/driver/history"
+          element={user?.role === "driver" ? <DriverHistory /> : <Navigate to="/" />}
+        />
+        <Route
+          path="/driver/profile"
+          element={user?.role === "driver" ? <DriverProfilePage user={user} onUser={setUser} /> : <Navigate to="/" />}
+        />
       </Routes>
     </Layout>
   );

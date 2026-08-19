@@ -1,206 +1,501 @@
-import { useEffect, useRef, useState } from "react";
-import Empty from "../components/Empty";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapView from "../components/MapView";
+import DriverShell from "../components/DriverShell";
+import { useHeaderHint } from "../components/headerHint";
 import { useToast } from "../components/Toast";
 import { api, errText, streamUrl } from "../api";
-import { STATUS_RU } from "../lib/labels";
+import { DRIVER_STAGE_RU } from "../lib/labels";
+import { formatKg, kindLabel, kmBetween } from "../lib/fleet";
 import type { Order, Settlement, User, Vehicle } from "../types";
+
+const STEPS: { id: string; label: string }[] = [
+  { id: "assigned", label: "Назначен" },
+  { id: "arrived", label: "Прибыл" },
+  { id: "loading", label: "Погрузка" },
+  { id: "transit", label: "В пути" },
+  { id: "delivered", label: "Завершён" },
+];
+
+const STEP_ORDER = STEPS.map((s) => s.id);
+
+function tripCode(id: number) {
+  return `#CLH-${String(id).padStart(5, "0")}`;
+}
+
+function stepIndex(status: string) {
+  const i = STEP_ORDER.indexOf(status);
+  return i >= 0 ? i : 0;
+}
+
+function tripPoints(trip: Order): Settlement[] {
+  return [
+    {
+      id: trip.origin_id,
+      name: trip.origin_name,
+      kind: "city",
+      lat: trip.origin_lat,
+      lon: trip.origin_lon,
+      population: 0,
+      note: "Погрузка",
+    },
+    {
+      id: trip.dest_id === trip.origin_id ? -trip.dest_id : trip.dest_id,
+      name: trip.dest_name,
+      kind: "industrial",
+      lat: trip.dest_lat,
+      lon: trip.dest_lon,
+      population: 0,
+      note: "Доставка",
+    },
+  ];
+}
 
 export default function Driver({ user }: { user: User }) {
   const toast = useToast();
-  const [settlements, setSettlements] = useState<Settlement[]>([]);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [trip, setTrip] = useState<Order | null>(null);
   const [route, setRoute] = useState<number[][]>([]);
-  const [status, setStatus] = useState("Ждём назначение рейса на ваш борт.");
-  const [live, setLive] = useState(false);
+  const [trail, setTrail] = useState<number[][]>([]);
+  const [geoOn, setGeoOn] = useState(false);
+  const [link, setLink] = useState<"ok" | "off">("ok");
+  const [busy, setBusy] = useState(false);
+  const [confirmDone, setConfirmDone] = useState(false);
+  const [finished, setFinished] = useState<Order | null>(null);
+  const [loadErr, setLoadErr] = useState(false);
   const watch = useRef<number | null>(null);
+  const vehicleRef = useRef<Vehicle | null>(null);
+  vehicleRef.current = vehicle;
+  useHeaderHint(vehicle ? vehicle.plate : null);
 
-  const current = vehicles.find((v) => v.driver_id === user.id) ?? vehicles[0] ?? null;
+  const loadFleet = useCallback(async () => {
+    const rows = await api<Vehicle[]>("/api/geo/vehicles");
+    const mine = rows.find((v) => v.driver_id === user.id) ?? null;
+    setVehicle(mine);
+    return mine;
+  }, [user.id]);
 
   useEffect(() => {
-    api<Settlement[]>("/api/geo/settlements").then(setSettlements);
-    api<Vehicle[]>("/api/geo/vehicles").then(setVehicles);
+    loadFleet().catch((e) => {
+      setLoadErr(true);
+      toast.err(errText(e));
+    });
     const es = new EventSource(streamUrl("/api/tracking/stream"));
+    es.onopen = () => setLink("ok");
+    es.onerror = () => setLink("off");
     es.onmessage = (ev) => {
+      setLink("ok");
       const data = JSON.parse(ev.data);
-      if (data.type === "fleet") setVehicles(data.vehicles ?? []);
-      if (data.type === "order") {
-        api<Vehicle[]>("/api/geo/vehicles").then(setVehicles).catch(() => undefined);
+      if (data.type === "fleet" && Array.isArray(data.vehicles)) {
+        const rows = data.vehicles as Vehicle[];
+        const mine = rows.find((v) => v.driver_id === user.id);
+        if (mine) setVehicle(mine);
+      }
+      if (data.type === "order" || data.type === "order_new") {
+        loadFleet().catch(() => undefined);
       }
     };
     return () => {
       es.close();
       if (watch.current != null) navigator.geolocation.clearWatch(watch.current);
     };
-  }, []);
+  }, [loadFleet, toast, user.id]);
 
   useEffect(() => {
-    if (!current?.current_order_id) {
+    if (!vehicle?.current_order_id) {
       setTrip(null);
       setRoute([]);
-      setLive(false);
+      setTrail([]);
       return;
     }
-    api<Order>(`/api/orders/${current.current_order_id}`)
+    const oid = vehicle.current_order_id;
+    api<Order>(`/api/orders/${oid}`)
       .then(setTrip)
-      .catch(() => setTrip(null));
-    api<{ geometry: number[][] }>(`/api/orders/${current.current_order_id}/route`)
+      .catch((e) => {
+        setTrip(null);
+        toast.err(errText(e));
+      });
+    api<{ geometry: number[][] }>(`/api/orders/${oid}/route`)
       .then((r) => setRoute(r.geometry ?? []))
       .catch(() => setRoute([]));
-  }, [current?.current_order_id, current?.status]);
+  }, [vehicle?.current_order_id, vehicle?.status, toast]);
+
+  useEffect(() => {
+    if (!vehicle || trip?.status !== "transit") {
+      setTrail([]);
+      return;
+    }
+    api<{ lat: number; lon: number }[]>(`/api/tracking/${vehicle.id}/trail`)
+      .then((pts) => setTrail(pts.map((p) => [p.lon, p.lat])))
+      .catch(() => setTrail([]));
+  }, [vehicle?.id, vehicle?.lat, vehicle?.lon, trip?.status]);
 
   function clearWatch() {
     if (watch.current != null) navigator.geolocation.clearWatch(watch.current);
     watch.current = null;
+    setGeoOn(false);
   }
 
-  async function refreshTrip() {
-    if (!current?.current_order_id) return;
-    const next = await api<Order>(`/api/orders/${current.current_order_id}`);
-    setTrip(next);
-    setVehicles(await api<Vehicle[]>("/api/geo/vehicles"));
-  }
-
-  async function step(path: string, okMsg: string) {
-    if (!current) return;
-    try {
-      await api(path, { method: "POST", body: JSON.stringify({ vehicle_id: current.id }) });
-      toast.ok(okMsg);
-      await refreshTrip();
-    } catch (e) {
-      toast.err(errText(e));
-    }
-  }
-
-  async function depart() {
-    if (!current) return;
-    try {
-      await api("/api/tracking/start-route", {
-        method: "POST",
-        body: JSON.stringify({ vehicle_id: current.id }),
-      });
-      setLive(true);
-      setStatus("Выехали. Маршрут по навигатору.");
-      toast.ok("В пути");
-      await refreshTrip();
-    } catch (e) {
-      toast.err(errText(e));
+  function startWatch(v: Vehicle) {
+    if (!navigator.geolocation) {
+      setGeoOn(false);
       return;
     }
-    if (!navigator.geolocation) return;
+    clearWatch();
     watch.current = navigator.geolocation.watchPosition(
       async (pos) => {
+        const board = vehicleRef.current;
+        if (!board) return;
         try {
           await api("/api/tracking/ping", {
             method: "POST",
             body: JSON.stringify({
-              vehicle_id: current.id,
+              vehicle_id: board.id,
               lat: pos.coords.latitude,
               lon: pos.coords.longitude,
             }),
           });
-          setStatus(`Live GPS · ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`);
-        } catch (err) {
-          toast.err(errText(err));
+          setGeoOn(true);
+        } catch {
+          setGeoOn(false);
         }
       },
-      () => setStatus("Движение по навигатору (геолокация недоступна)"),
+      () => setGeoOn(false),
       { enableHighAccuracy: true, maximumAge: 3000 }
     );
   }
 
-  async function complete() {
-    if (!current) return;
-    try {
-      await api("/api/tracking/complete-route", {
-        method: "POST",
-        body: JSON.stringify({ vehicle_id: current.id }),
-      });
-      clearWatch();
-      setLive(false);
+  useEffect(() => {
+    if (trip?.status === "transit" && vehicle) startWatch(vehicle);
+    else clearWatch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trip?.status, vehicle?.id]);
+
+  async function refresh() {
+    const mine = await loadFleet();
+    if (!mine?.current_order_id) {
       setTrip(null);
-      setStatus("Рейс завершён. Борт свободен.");
-      toast.ok("Доставка закрыта");
-      setVehicles(await api<Vehicle[]>("/api/geo/vehicles"));
+      return;
+    }
+    setTrip(await api<Order>(`/api/orders/${mine.current_order_id}`));
+  }
+
+  async function step(path: string, okMsg: string) {
+    if (!vehicle) return;
+    setBusy(true);
+    try {
+      await api(path, { method: "POST", body: JSON.stringify({ vehicle_id: vehicle.id }) });
+      toast.ok(okMsg);
+      await refresh();
     } catch (e) {
       toast.err(errText(e));
+    } finally {
+      setBusy(false);
     }
   }
 
-  const routes = trip?.status === "transit" && route.length > 1 ? [{ id: String(trip.id), coords: route }] : [];
-  const mapVehicles = current ? [current] : [];
+  async function depart() {
+    if (!vehicle) return;
+    setBusy(true);
+    try {
+      await api("/api/tracking/start-route", {
+        method: "POST",
+        body: JSON.stringify({ vehicle_id: vehicle.id }),
+      });
+      toast.ok("Рейс начат");
+      await refresh();
+    } catch (e) {
+      toast.err(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function complete() {
+    if (!vehicle || !trip) return;
+    setBusy(true);
+    try {
+      const snapshot = trip;
+      await api("/api/tracking/complete-route", {
+        method: "POST",
+        body: JSON.stringify({ vehicle_id: vehicle.id }),
+      });
+      clearWatch();
+      setConfirmDone(false);
+      setFinished(snapshot);
+      setTrip(null);
+      toast.ok("Доставка закрыта");
+      await loadFleet();
+    } catch (e) {
+      toast.err(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const st = trip?.status;
+  const maps = trip ? tripPoints(trip) : vehicle
+    ? [
+        {
+          id: vehicle.home_id,
+          name: "База",
+          kind: "city",
+          lat: vehicle.lat,
+          lon: vehicle.lon,
+          population: 0,
+        } satisfies Settlement,
+      ]
+    : [];
+  const routes = route.length > 1 && trip ? [{ id: String(trip.id), coords: route }] : [];
+  const fitTo = useMemo(() => {
+    if (!trip) return vehicle ? [[vehicle.lon, vehicle.lat]] : undefined;
+    if (st === "transit") {
+      return [
+        [trip.dest_lon, trip.dest_lat],
+        [vehicle?.lon ?? trip.origin_lon, vehicle?.lat ?? trip.origin_lat],
+        ...route.filter((_, i) => i % 10 === 0),
+      ];
+    }
+    if (st === "assigned") return [[trip.origin_lon, trip.origin_lat]];
+    return [
+      [trip.origin_lon, trip.origin_lat],
+      [trip.dest_lon, trip.dest_lat],
+    ];
+  }, [trip, st, vehicle, route]);
+
+  const remaining =
+    vehicle && trip && st === "transit"
+      ? kmBetween(vehicle.lat, vehicle.lon, trip.dest_lat, trip.dest_lon)
+      : null;
+
+  const cta = !trip
+    ? null
+    : st === "assigned"
+      ? { label: "Я прибыл на место", run: () => step("/api/tracking/arrive", "Вы на погрузке"), kind: "primary" as const }
+      : st === "arrived"
+        ? { label: "Погрузка завершена", run: () => step("/api/tracking/start-loading", "Погрузка зафиксирована"), kind: "primary" as const }
+        : st === "loading"
+          ? { label: "Начать рейс", run: depart, kind: "primary" as const }
+          : st === "transit"
+            ? { label: "Завершить рейс", run: () => setConfirmDone(true), kind: "warn" as const }
+            : null;
+
+  const stage = trip ? DRIVER_STAGE_RU[trip.status] ?? trip.status : "Свободен";
+  const idx = trip ? stepIndex(st === "pickup" ? "loading" : st ?? "assigned") : -1;
 
   return (
-    <div className="page split">
-      <aside className="side">
-        <p className="kicker">Водитель · мой борт</p>
-        <h2 className="display" style={{ fontSize: 34 }}>
-          Рейс
-        </h2>
-        <p className="lede">
-          Этапы по порядку: прибыл → погрузка → выехать → завершить. Пропускать нельзя. GPS с телефона не обязателен.
-        </p>
-        {current ? (
-          <div className="card">
-            <span className={`badge ${current.status === "enroute" ? "transit" : "delivered"}`}>{current.plate}</span>
-            <h3>{current.driver_name}</h3>
-            <div className="meta">
-              <span>{current.kind}</span>
-              <span>{current.capacity_kg} кг</span>
+    <DriverShell>
+      <div className={`driver-ops${st === "transit" ? " transit" : ""}`}>
+        <section className="driver-panel">
+          <div className="driver-topline">
+            <span className={`driver-link${link === "ok" ? " on" : ""}`}>
+              {link === "ok" ? "Связь есть" : "Нет связи, показаны последние данные"}
+            </span>
+            <span className={`driver-geo${geoOn ? " on" : ""}`}>
+              {geoOn ? "Геолокация активна" : "Геолокация отключена"}
+            </span>
+          </div>
+
+          {finished ? (
+            <div className="driver-done">
+              <p className="kicker">Готово</p>
+              <h2 className="display" style={{ fontSize: 36 }}>
+                Рейс завершён
+              </h2>
+              <p className="driver-code">{tripCode(finished.id)}</p>
+              <p className="fleet-route">
+                {finished.origin_name} → {finished.dest_name}
+              </p>
+              <p className="lede">Доставка завершена. Следующий рейс появится, когда его назначит перевозчик.</p>
+              <button type="button" className="btn driver-cta" onClick={() => setFinished(null)}>
+                Понятно
+              </button>
             </div>
-          </div>
-        ) : (
-          <div style={{ marginTop: 8 }}>
-            <Empty title="Нет закреплённого борта" hint="Перевозчик создаёт борт и назначает вас водителем." />
-          </div>
-        )}
-        {trip ? (
-          <div className="card" style={{ marginTop: 16 }}>
-            <span className={`badge ${trip.status}`}>{STATUS_RU[trip.status] ?? trip.status}</span>
-            <h3>
-              {trip.origin_name} → {trip.dest_name}
-            </h3>
-            <div className="meta">
-              <span>{trip.cargo_title}</span>
-              <span>{trip.weight_kg} кг</span>
-              <span>{trip.distance_km} км</span>
+          ) : loadErr && !vehicle ? (
+            <div className="driver-idle">
+              <h2 className="display" style={{ fontSize: 32 }}>
+                Не удалось загрузить рейс
+              </h2>
+              <p className="lede">Проверьте связь и обновите страницу.</p>
+              <button
+                type="button"
+                className="btn driver-cta"
+                onClick={() => {
+                  setLoadErr(false);
+                  loadFleet().catch((e) => {
+                    setLoadErr(true);
+                    toast.err(errText(e));
+                  });
+                }}
+              >
+                Повторить
+              </button>
             </div>
-          </div>
-        ) : current ? (
-          <div style={{ marginTop: 16 }}>
-            <Empty title="Сейчас без груза" hint="Когда перевозчик назначит рейс, он появится здесь." />
-          </div>
-        ) : null}
-        <div className="row-actions">
-          {st === "assigned" ? (
-            <button className="btn" onClick={() => step("/api/tracking/arrive", "Прибыли на погрузку")}>
-              Я прибыл на погрузку
-            </button>
-          ) : null}
-          {st === "arrived" ? (
-            <button className="btn" onClick={() => step("/api/tracking/start-loading", "Погрузка начата")}>
-              Начать погрузку
-            </button>
-          ) : null}
-          {st === "loading" ? (
-            <button className="btn" onClick={depart}>
-              Выехать
-            </button>
-          ) : null}
-          {st === "transit" ? (
-            <button className="btn" onClick={complete}>
-              Завершить рейс
-            </button>
-          ) : null}
+          ) : !vehicle ? (
+            <div className="driver-idle">
+              <h2 className="display" style={{ fontSize: 32 }}>
+                Нет закреплённого борта
+              </h2>
+              <p className="lede">Перевозчик создаёт борт и назначает вас водителем. Пока действий не требуется.</p>
+            </div>
+          ) : !trip ? (
+            <div className="driver-idle">
+              <h2 className="display" style={{ fontSize: 32 }}>
+                Нет активного рейса
+              </h2>
+              <p className="lede">
+                Сейчас вам не назначен рейс. Как только перевозчик назначит рейс, он появится здесь.
+              </p>
+              <div className="card">
+                <p className="kicker">Ваш борт</p>
+                <h3>
+                  {kindLabel(vehicle.kind)} · {vehicle.plate}
+                </h3>
+                <span className="fleet-badge idle">
+                  <i />
+                  Свободен
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="kicker">Рейс {tripCode(trip.id)}</p>
+              <ol className="driver-steps">
+                {STEPS.map((s, i) => (
+                  <li key={s.id} className={i < idx ? "done" : i === idx ? "now" : ""}>
+                    <i />
+                    {s.label}
+                  </li>
+                ))}
+              </ol>
+              <span className={`fleet-badge ${st === "assigned" ? "assigned" : st === "transit" ? "transit" : st === "loading" ? "idle" : "loading"}`}>
+                <i />
+                {stage}
+              </span>
+              {st === "transit" ? (
+                <>
+                  <h2 className="display driver-title">{trip.dest_name}</h2>
+                  <p className="driver-point-label">Пункт назначения</p>
+                </>
+              ) : (
+                <>
+                  <h2 className="display driver-title">{trip.origin_name}</h2>
+                  <p className="driver-point-label">Пункт погрузки</p>
+                  <div className="driver-arrow">↓</div>
+                  <h3 className="driver-dest">{trip.dest_name}</h3>
+                  <p className="driver-point-label">Пункт доставки</p>
+                </>
+              )}
+
+              {st === "loading" ? (
+                <p className="lede" style={{ marginTop: 16 }}>
+                  Погрузка завершена. Маршрут {trip.origin_name} → {trip.dest_name}
+                  {trip.distance_km ? ` · ${trip.distance_km.toFixed(0)} км` : ""}.
+                </p>
+              ) : null}
+
+              {st === "transit" && remaining != null ? (
+                <>
+                  <div className="driver-live">
+                    <div>
+                      <b>{trip.dest_name}</b>
+                      <span>Пункт назначения</span>
+                    </div>
+                    <div>
+                      <b>{remaining.toFixed(0)} км</b>
+                      <span>Осталось</span>
+                    </div>
+                    {trip.distance_km ? (
+                      <div>
+                        <b>{trip.distance_km.toFixed(0)} км</b>
+                        <span>Весь путь</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <p className="lede" style={{ marginTop: 10 }}>
+                    {trip.cargo_title} · {formatKg(trip.weight_kg)}
+                  </p>
+                </>
+              ) : (
+                <div className="driver-facts">
+                  <div>
+                    <span>Груз</span>
+                    <b>{trip.cargo_title}</b>
+                  </div>
+                  <div>
+                    <span>Вес</span>
+                    <b>{formatKg(trip.weight_kg)}</b>
+                  </div>
+                  {trip.distance_km ? (
+                    <div>
+                      <span>Расстояние</span>
+                      <b>{trip.distance_km.toFixed(0)} км</b>
+                    </div>
+                  ) : null}
+                  {trip.created_at ? (
+                    <div>
+                      <span>Создан</span>
+                      <b>{new Date(trip.created_at).toLocaleString("ru-KZ")}</b>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              <div className="card driver-bort-mini">
+                <span className="kicker" style={{ margin: 0 }}>
+                  Ваш борт
+                </span>
+                <strong>
+                  {kindLabel(vehicle.kind)} · {vehicle.plate}
+                </strong>
+              </div>
+
+              {cta ? (
+                <button
+                  type="button"
+                  className={`btn driver-cta${cta.kind === "warn" ? " dust" : ""}`}
+                  disabled={busy}
+                  onClick={cta.run}
+                >
+                  {cta.label}
+                </button>
+              ) : null}
+            </>
+          )}
+        </section>
+
+        <div className="driver-map">
+          <MapView
+            settlements={finished ? [] : maps}
+            vehicles={vehicle && !finished ? [vehicle] : []}
+            routes={finished ? [] : routes}
+            trail={st === "transit" ? trail : []}
+            fitTo={finished ? undefined : fitTo}
+            navPosition="bottom-right"
+          />
         </div>
-        <p className="lede" style={{ marginTop: 16 }}>
-          {live ? "В пути · " : ""}
-          {status}
-        </p>
-      </aside>
-      <MapView settlements={settlements} vehicles={mapVehicles} routes={routes} />
-    </div>
+      </div>
+
+      {confirmDone && trip ? (
+        <div className="modal-backdrop" onClick={() => !busy && setConfirmDone(false)} role="presentation">
+          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <p className="kicker">Подтверждение</p>
+            <h2 className="display" style={{ fontSize: 28 }}>
+              Завершить рейс?
+            </h2>
+            <p className="lede">
+              {trip.origin_name} → {trip.dest_name}
+            </p>
+            <div className="row-actions">
+              <button type="button" className="btn secondary" disabled={busy} onClick={() => setConfirmDone(false)}>
+                Отмена
+              </button>
+              <button type="button" className="btn dust driver-cta" disabled={busy} onClick={complete}>
+                Завершить рейс
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </DriverShell>
   );
 }

@@ -52,6 +52,7 @@ def _out(o: Order, plate: str | None = None) -> OrderOut:
         empty_km_saved=o.empty_km_saved,
         is_backhaul=o.is_backhaul,
         created_at=o.created_at,
+        delivered_at=o.delivered_at,
         origin_lat=o.origin.lat,
         origin_lon=o.origin.lon,
         dest_lat=o.dest.lat,

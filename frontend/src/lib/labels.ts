@@ -23,3 +23,12 @@ export const VEHICLE_STATUS_RU: Record<string, string> = {
   enroute: "в рейсе",
   loading: "погрузка",
 };
+
+/** Подписи этапов для кабинета водителя — те же статусы заявки, другой тон. */
+export const DRIVER_STAGE_RU: Record<string, string> = {
+  assigned: "Ожидает погрузки",
+  arrived: "На погрузке",
+  loading: "Готов к выезду",
+  transit: "В пути",
+  delivered: "Рейс завершён",
+};

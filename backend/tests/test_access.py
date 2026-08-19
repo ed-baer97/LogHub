@@ -15,6 +15,12 @@ def test_unauthenticated_lists_are_closed(client: TestClient):
     assert client.get("/api/orders").status_code == 401
     assert client.get("/api/geo/vehicles").status_code == 401
     assert client.get("/api/geo/settlements").status_code == 401
+    catalog = client.get("/api/geo/catalog")
+    assert catalog.status_code == 200
+    assert all(p.get("sender_id") in (None, 0) for p in catalog.json())
+    corridors = client.get("/api/geo/corridors")
+    assert corridors.status_code == 200
+    assert isinstance(corridors.json(), list)
     assert client.get("/api/analytics/summary").status_code == 401
 
 
@@ -211,6 +217,89 @@ def test_carrier_edits_driver_and_password(client: TestClient, accounts):
     assert blocked.status_code == 200, blocked.text
     assert blocked.json()["driver_active"] is False
     assert client.post("/api/auth/login", json={"email": "driver-edit2@test.kz", "password": "newpass"}).status_code == 403
+
+
+def test_driver_updates_own_profile(client: TestClient, accounts):
+    c1 = _auth(client, "carrier1@test.kz")
+    origin, _ = _points(accounts)
+    bort = client.post(
+        "/api/fleet/borts",
+        headers=c1,
+        json={
+            "plate": "A010PROF",
+            "kind": "tent",
+            "capacity_kg": 8000,
+            "home_id": origin,
+            "driver_name": "Profile Driver",
+            "driver_email": "driver-profile@test.kz",
+            "driver_phone": "+77001110000",
+            "driver_password": "secret",
+        },
+    )
+    assert bort.status_code == 200, bort.text
+    d = _auth(client, "driver-profile@test.kz")
+    assert (
+        client.patch(
+            "/api/auth/me",
+            headers=d,
+            json={"email": "driver-profile2@test.kz", "password": "newer"},
+        ).status_code
+        == 400
+    )
+    patched = client.patch(
+        "/api/auth/me",
+        headers=d,
+        json={
+            "name": "Асылбек",
+            "phone": "+77001112233",
+            "email": "driver-profile2@test.kz",
+            "current_password": "secret",
+            "password": "newer",
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["name"] == "Асылбек"
+    assert patched.json()["email"] == "driver-profile2@test.kz"
+    assert patched.json()["phone"] == "+77001112233"
+    assert "password" not in patched.json()
+    assert client.post("/api/auth/login", json={"email": "driver-profile2@test.kz", "password": "newer"}).status_code == 200
+    fleet = client.get("/api/geo/vehicles", headers=c1).json()
+    unit = next(v for v in fleet if v["id"] == bort.json()["id"])
+    assert unit["driver_name"] == "Асылбек"
+
+
+def test_driver_sees_own_trip_history(client: TestClient, accounts):
+    s1 = _auth(client, "sender1@test.kz")
+    c1 = _auth(client, "carrier1@test.kz")
+    origin, dest = _points(accounts)
+    order = client.post(
+        "/api/orders",
+        headers=s1,
+        json={"origin_id": origin, "dest_id": dest, "cargo_title": "История", "weight_kg": 200},
+    ).json()
+    client.post(f"/api/orders/{order['id']}/take", headers=c1, json={})
+    bort = client.post(
+        "/api/fleet/borts",
+        headers=c1,
+        json={
+            "plate": "A011HIST",
+            "kind": "tent",
+            "capacity_kg": 8000,
+            "home_id": origin,
+            "driver_name": "Hist Driver",
+            "driver_email": "driver-hist@test.kz",
+            "driver_password": "secret",
+        },
+    ).json()
+    client.post(f"/api/orders/{order['id']}/assign", headers=c1, json={"vehicle_id": bort["id"]})
+    d = _auth(client, "driver-hist@test.kz")
+    mine = client.get("/api/orders", headers=d)
+    assert mine.status_code == 200, mine.text
+    ids = [o["id"] for o in mine.json()]
+    assert order["id"] in ids
+    assert all(o["vehicle_id"] == bort["id"] for o in mine.json())
+    foreign = client.get("/api/orders", headers=_auth(client, "carrier2@test.kz")).json()
+    assert all(o["id"] != order["id"] or o["status"] == "open" for o in foreign)
 
 
 def test_only_sender_creates_orders(client: TestClient, accounts):

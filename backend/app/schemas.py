@@ -16,6 +16,13 @@ class SettlementOut(BaseModel):
     sender_id: int | None = None
 
 
+class CorridorOut(BaseModel):
+    id: str
+    origin: str
+    dest: str
+    coords: list[list[float]]
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -33,6 +40,14 @@ class UserOut(BaseModel):
 class LoginIn(BaseModel):
     email: str
     password: str
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    current_password: str | None = None
+    password: str | None = None
 
 
 class TokenOut(BaseModel):
@@ -103,6 +118,7 @@ class OrderOut(BaseModel):
     empty_km_saved: float
     is_backhaul: bool
     created_at: datetime | None = None
+    delivered_at: datetime | None = None
     origin_lat: float
     origin_lon: float
     dest_lat: float

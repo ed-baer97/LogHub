@@ -4,6 +4,7 @@ import { errText } from "../api";
 import { useTheme } from "../theme";
 import type { Role, User } from "../types";
 import { useToast } from "./Toast";
+import { HeaderHintProvider, useHeaderHintValue } from "./headerHint";
 
 const CABINET: Record<Role, string> = {
   sender: "/sender",
@@ -23,12 +24,13 @@ const ROLE_RU: Record<Role, string> = {
   dispatcher: "админ",
 };
 
-export default function Layout({
+function LayoutInner({
   user,
   onLogin,
   onLogout,
   loginOpen,
   setLoginOpen,
+  hideChrome,
   children,
 }: {
   user: User | null;
@@ -36,11 +38,13 @@ export default function Layout({
   onLogout: () => void;
   loginOpen: boolean;
   setLoginOpen: (open: boolean) => void;
+  hideChrome?: boolean;
   children: ReactNode;
 }) {
   const cabinet = user ? CABINET[user.role] : null;
   const toast = useToast();
   const { theme, toggle } = useTheme();
+  const headerHint = useHeaderHintValue();
   const open = loginOpen;
   const setOpen = setLoginOpen;
   const [email, setEmail] = useState("");
@@ -73,7 +77,8 @@ export default function Layout({
   }
 
   return (
-    <div className="app">
+    <div className={`app${hideChrome ? " land-app" : ""}`}>
+      {!hideChrome && (
       <header className="topbar">
         <NavLink to={cabinet ?? "/"} className="brand">
           <div className="mark" />
@@ -96,7 +101,7 @@ export default function Layout({
                 <strong>{user.name}</strong>
                 <br />
                 {ROLE_RU[user.role]}
-                {user.company ? ` · ${user.company}` : ""}
+                {headerHint ? ` · ${headerHint}` : user.company ? ` · ${user.company}` : ""}
               </span>
               <button className="btn secondary small" onClick={onLogout}>
                 Выйти
@@ -109,6 +114,7 @@ export default function Layout({
           )}
         </div>
       </header>
+      )}
       {children}
 
       {open && !user && (
@@ -160,5 +166,21 @@ export default function Layout({
         </div>
       )}
     </div>
+  );
+}
+
+export default function Layout(props: {
+  user: User | null;
+  onLogin: (email: string, password: string) => Promise<void>;
+  onLogout: () => void;
+  loginOpen: boolean;
+  setLoginOpen: (open: boolean) => void;
+  hideChrome?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <HeaderHintProvider>
+      <LayoutInner {...props} />
+    </HeaderHintProvider>
   );
 }

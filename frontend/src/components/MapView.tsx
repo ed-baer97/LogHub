@@ -26,38 +26,65 @@ function mapStyle(theme: Theme): maplibregl.StyleSpecification {
 }
 
 type RouteLine = { id: string; coords: number[][] };
+export type NetworkDot = { id: string; lon: number; lat: number; tone: "idle" | "order" | "load" | "transit" };
 
 export default function MapView({
   settlements,
   vehicles,
   routes = [],
   trail = [],
+  networkDots = [],
   navPosition = "top-right",
   onPick,
   fitTo,
+  fitMaxZoom = 11,
+  center,
+  zoom,
+  legend = "fleet",
+  mapTheme,
+  showControls = true,
+  className = "",
+  locked = false,
 }: {
   settlements: Settlement[];
   vehicles: Vehicle[];
   routes?: RouteLine[];
   trail?: number[][];
+  networkDots?: NetworkDot[];
   navPosition?: "top-right" | "top-left" | "bottom-right" | "bottom-left";
   onPick?: (lat: number, lon: number) => void;
   fitTo?: number[][];
+  fitMaxZoom?: number;
+  center?: [number, number];
+  zoom?: number;
+  legend?: "fleet" | "places" | "network" | "none";
+  mapTheme?: Theme;
+  showControls?: boolean;
+  className?: string;
+  locked?: boolean;
 }) {
   const { theme } = useTheme();
-  const themeRef = useRef(theme);
-  themeRef.current = theme;
+  const effectiveTheme = mapTheme ?? theme;
+  const themeRef = useRef(effectiveTheme);
+  themeRef.current = effectiveTheme;
   const pickRef = useRef(onPick);
   pickRef.current = onPick;
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
+  const viewRef = useRef({ center, zoom });
+  viewRef.current = { center, zoom };
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markers = useRef<maplibregl.Marker[]>([]);
   const popup = useRef<maplibregl.Popup | null>(null);
   const ready = useRef(false);
+  const appliedTheme = useRef<Theme | null>(null);
   const routesRef = useRef(routes);
   const trailRef = useRef(trail);
+  const dotsRef = useRef(networkDots);
   routesRef.current = routes;
   trailRef.current = trail;
+  dotsRef.current = networkDots;
 
   function applyOverlays(map: maplibregl.Map) {
     const routeSrc = map.getSource("routes") as GeoJSONSource | undefined;
@@ -89,39 +116,116 @@ export default function MapView({
             : [],
       });
     }
+    const dotsSrc = map.getSource("network") as GeoJSONSource | undefined;
+    if (dotsSrc) {
+      dotsSrc.setData({
+        type: "FeatureCollection",
+        features: dotsRef.current.map((d) => ({
+          type: "Feature" as const,
+          properties: { id: d.id, tone: d.tone },
+          geometry: { type: "Point" as const, coordinates: [d.lon, d.lat] },
+        })),
+      });
+    }
+  }
+
+  function addOverlayLayers(map: maplibregl.Map) {
+    if (map.getSource("routes")) return;
+    map.addSource("routes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({
+      id: "routes-line",
+      type: "line",
+      source: "routes",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#2ec4b6", "line-width": 2.2, "line-opacity": 0.78 },
+    });
+    map.addSource("trail", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({
+      id: "trail-line",
+      type: "line",
+      source: "trail",
+      paint: {
+        "line-color": "#e0a45a",
+        "line-width": 2.5,
+        "line-opacity": 0.9,
+        "line-dasharray": [1.4, 1.2],
+      },
+    });
+    map.addSource("network", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({
+      id: "network-glow",
+      type: "circle",
+      source: "network",
+      paint: {
+        "circle-radius": 11,
+        "circle-blur": 0.8,
+        "circle-opacity": 0.28,
+        "circle-color": [
+          "match",
+          ["get", "tone"],
+          "idle",
+          "#3dcc7a",
+          "order",
+          "#6ec8ff",
+          "load",
+          "#e0a45a",
+          "transit",
+          "#a78bfa",
+          "#2ec4b6",
+        ],
+      },
+    });
+    map.addLayer({
+      id: "network-dots",
+      type: "circle",
+      source: "network",
+      paint: {
+        "circle-radius": 5,
+        "circle-opacity": 0.95,
+        "circle-stroke-width": 1,
+        "circle-stroke-color": "rgba(255,255,255,0.35)",
+        "circle-color": [
+          "match",
+          ["get", "tone"],
+          "idle",
+          "#3dcc7a",
+          "order",
+          "#6ec8ff",
+          "load",
+          "#e0a45a",
+          "transit",
+          "#a78bfa",
+          "#2ec4b6",
+        ],
+      },
+    });
   }
 
   useEffect(() => {
     if (!ref.current || mapRef.current) return;
+    const lock = lockedRef.current;
     const map = new maplibregl.Map({
       container: ref.current,
       style: mapStyle(themeRef.current),
-      center: [52.4, 44.0],
-      zoom: 6.2,
-      attributionControl: true,
+      center: viewRef.current.center ?? [52.4, 44.0],
+      zoom: viewRef.current.zoom ?? 6.2,
+      minZoom: lock ? 6.1 : 1,
+      maxZoom: lock ? 8.4 : 18,
+      maxBounds: lock ? [[49.9, 42.3], [56.4, 46.2]] : undefined,
+      attributionControl: { compact: true },
+      scrollZoom: !lock,
+      boxZoom: !lock,
+      dragRotate: !lock,
+      dragPan: !lock,
+      keyboard: !lock,
+      doubleClickZoom: !lock,
+      touchZoomRotate: !lock,
+      touchPitch: false,
     });
     popup.current = new maplibregl.Popup({ offset: 16, closeButton: true, maxWidth: "260px" });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), navPosition);
+    if (showControls) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), navPosition);
     map.on("load", () => {
-      map.addSource("routes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({
-        id: "routes-line",
-        type: "line",
-        source: "routes",
-        paint: { "line-color": "#2ec4b6", "line-width": 3, "line-opacity": 0.85 },
-      });
-      map.addSource("trail", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({
-        id: "trail-line",
-        type: "line",
-        source: "trail",
-        paint: {
-          "line-color": "#e0a45a",
-          "line-width": 2.5,
-          "line-opacity": 0.9,
-          "line-dasharray": [1.4, 1.2],
-        },
-      });
+      addOverlayLayers(map);
       ready.current = true;
       applyOverlays(map);
     });
@@ -190,61 +294,107 @@ export default function MapView({
         new maplibregl.Marker({ element: wrap, anchor: "center" }).setLngLat([v.lon, v.lat]).addTo(map)
       );
     }
-  }, [settlements, vehicles]);
+  }, [settlements, vehicles, className]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready.current) return;
     applyOverlays(map);
-  }, [routes, trail]);
+  }, [routes, trail, networkDots]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready.current || !fitTo?.length) return;
+    if (!map || !ready.current) return;
+    if (center && center.length >= 2) {
+      map.jumpTo({ center: [center[0], center[1]], zoom: zoom ?? map.getZoom() });
+      return;
+    }
+    if (!fitTo?.length) return;
     const bounds = new maplibregl.LngLatBounds();
     for (const pt of fitTo) {
       if (pt.length >= 2) bounds.extend([pt[0], pt[1]]);
     }
     if (bounds.isEmpty()) return;
-    map.fitBounds(bounds, { padding: 72, maxZoom: 11, duration: 700 });
-  }, [fitTo]);
+    map.fitBounds(bounds, { padding: 72, maxZoom: fitMaxZoom, duration: 700 });
+  }, [center, zoom, fitTo, fitMaxZoom]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const apply = () => {
-      const src = map.getSource("osm") as maplibregl.RasterTileSource | undefined;
-      src?.setTiles(tilesFor(theme));
-    };
-    if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
-  }, [theme]);
+    if (appliedTheme.current === effectiveTheme) return;
+    const first = appliedTheme.current === null;
+    appliedTheme.current = effectiveTheme;
+    if (first) return;
+
+    ready.current = false;
+    map.setStyle(mapStyle(effectiveTheme));
+    map.once("style.load", () => {
+      addOverlayLayers(map);
+      ready.current = true;
+      applyOverlays(map);
+      map.resize();
+    });
+  }, [effectiveTheme]);
 
   return (
-    <div className={`map-wrap${onPick ? " pick-mode" : ""}`}>
+    <div className={`map-wrap${onPick ? " pick-mode" : ""}${className ? ` ${className}` : ""}`}>
       <div ref={ref} style={{ position: "absolute", inset: 0 }} />
+      {legend !== "none" ? (
       <div className="legend">
-        <div>
-          <i style={{ background: "#2ec4b6" }} />
-          город
-        </div>
-        <div>
-          <i style={{ background: "#cfe7d8" }} />
-          посёлок
-        </div>
-        <div>
-          <i style={{ background: "#e07a5f" }} />
-          промзона
-        </div>
-        <div>
-          <i style={{ background: "#e0a45a" }} />
-          машина / трек
-        </div>
-        <div>
-          <i style={{ background: "#2ec4b6" }} />
-          live GPS
-        </div>
+        {legend === "network" ? (
+          <>
+            <div>
+              <i style={{ background: "#3dcc7a" }} />
+              свободны
+            </div>
+            <div>
+              <i style={{ background: "#6ec8ff" }} />
+              заявки
+            </div>
+            <div>
+              <i style={{ background: "#e0a45a" }} />
+              погрузка
+            </div>
+            <div>
+              <i style={{ background: "#a78bfa" }} />
+              в пути
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <i style={{ background: "#2ec4b6" }} />
+              город
+            </div>
+            <div>
+              <i style={{ background: "#cfe7d8" }} />
+              посёлок
+            </div>
+            <div>
+              <i style={{ background: "#e07a5f" }} />
+              промзона
+            </div>
+            {legend === "places" ? (
+              <div>
+                <i style={{ background: "#e0a45a" }} />
+                стройка
+              </div>
+            ) : (
+              <>
+                <div>
+                  <i style={{ background: "#e0a45a" }} />
+                  машина / трек
+                </div>
+                <div>
+                  <i style={{ background: "#2ec4b6" }} />
+                  live GPS
+                </div>
+              </>
+            )}
+          </>
+        )}
       </div>
+      ) : null}
     </div>
   );
 }
