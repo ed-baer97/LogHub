@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Caspian LogHub — биржа перевозок Мангистау</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;700&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect rx='8' width='32' height='32' fill='%23147f78'/%3E%3Crect x='6' y='18' width='20' height='6' rx='2' fill='%232ec4b6'/%3E%3Ccircle cx='11' cy='24' r='2.2' fill='%230b100e'/%3E%3Ccircle cx='22' cy='24' r='2.2' fill='%230b100e'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("caspian-theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.dataset.theme = t;
+            document.documentElement.style.colorScheme = t;
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

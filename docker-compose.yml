@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: caspian
+      POSTGRES_PASSWORD: caspian
+      POSTGRES_DB: caspian
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caspian -d caspian"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://caspian:caspian@postgres:5432/caspian
+      SECRET_KEY: caspian-hackathon-secret
+      CORS_ORIGINS: http://localhost,http://localhost:80,http://localhost:5173,http://127.0.0.1
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
