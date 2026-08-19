@@ -42,7 +42,7 @@ open / taken / assigned → cancelled
 |------|--------|--------|
 | Супер-админ | `superadmin@caspian.kz` | `demo` |
 
-Остальных заводите в интерфейсе. Пароль задаётся при создании (по умолчанию тоже `demo`) и показывается **один раз** в тосте.
+Остальных заводите в интерфейсе. Пароль при создании можно оставить пустым — сервер сгенерирует и покажет **один раз** в тосте (минимум 6 символов, если задаёте сами).
 
 Цепочка для проверки с нуля — в [docs/getting-started.md](docs/getting-started.md).
 
@@ -98,7 +98,7 @@ PostgreSQL вместо SQLite:
 ```bash
 docker compose up -d postgres
 # Windows PowerShell:
-$env:DATABASE_URL="postgresql+psycopg://caspian:caspian@localhost:5432/caspian"
+$env:DATABASE_URL="postgresql+psycopg://caspian:YOUR_POSTGRES_PASSWORD@localhost:5432/caspian"
 ```
 
 Подробности: [docs/getting-started.md](docs/getting-started.md), [docs/deployment.md](docs/deployment.md).
@@ -109,7 +109,7 @@ $env:DATABASE_URL="postgresql+psycopg://caspian:caspian@localhost:5432/caspian"
 docker compose up --build -d
 ```
 
-Фронт: порт **80**, API: **8000**. Скрипт: `scripts/deploy-linux.sh`.
+Фронт: порт **80**, API gateway: **127.0.0.1:8000**. Перед запуском скопируйте `.env.example` в `.env`. Скрипт: `scripts/deploy-linux.sh`.
 
 ```bash
 cloudflared tunnel --url http://localhost:80

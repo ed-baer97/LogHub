@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, hash_password, is_legacy_hash, issue_token, verify_password
 from app.database import get_db
 from app.models import User, Vehicle
 from app.schemas import LoginIn, ProfileUpdate, TokenOut, UserOut
+from app.services.ratelimit import assert_login_allowed, clear_login_failures, client_ip, register_login_failure
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -21,17 +22,25 @@ def demo_accounts():
 
 
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, db: Annotated[Session, Depends(get_db)]):
+def login(body: LoginIn, request: Request, db: Annotated[Session, Depends(get_db)]):
+    ip = client_ip(request)
+    assert_login_allowed(body.email, ip)
     user = db.query(User).filter(User.email == body.email).one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
+        register_login_failure(body.email, ip)
         raise HTTPException(401, "Неверный логин или пароль")
     if not getattr(user, "is_active", True):
+        register_login_failure(body.email, ip)
         raise HTTPException(403, "Учётная запись заблокирована")
+    clear_login_failures(body.email, ip)
     if is_legacy_hash(user.password_hash):
         user.password_hash = hash_password(body.password)
         db.commit()
         db.refresh(user)
-    return TokenOut(token=issue_token(user.id), user=UserOut.model_validate(user))
+    return TokenOut(
+        token=issue_token(user.id, getattr(user, "token_version", 0) or 0),
+        user=UserOut.model_validate(user),
+    )
 
 
 @router.get("/me", response_model=UserOut)
@@ -64,8 +73,6 @@ def update_me(
     if body.phone is not None:
         user.phone = body.phone.strip() or None
     if password_changed:
-        if len(body.password) < 4:
-            raise HTTPException(400, "Пароль слишком короткий")
         user.password_hash = hash_password(body.password)
     db.commit()
     db.refresh(user)

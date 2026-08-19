@@ -70,6 +70,7 @@ class _Sub:
 class EventBus:
     def __init__(self) -> None:
         self._subs: list[_Sub] = []
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def subscribe(self, channels: list[str]) -> asyncio.Queue[dict[str, Any]]:
         sub = _Sub(channels)
@@ -78,6 +79,20 @@ class EventBus:
 
     def unsubscribe(self, q: asyncio.Queue[dict[str, Any]]) -> None:
         self._subs = [s for s in self._subs if s.q is not q]
+
+    def _deliver(self, event: dict[str, Any], wanted: set[str]) -> None:
+        for sub in list(self._subs):
+            if not (sub.channels & wanted):
+                continue
+            while True:
+                try:
+                    sub.q.put_nowait(event)
+                    break
+                except asyncio.QueueFull:
+                    try:
+                        sub.q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
 
     def publish(self, event: dict[str, Any]) -> None:
         channels = channels_for_event(event)
@@ -91,22 +106,22 @@ class EventBus:
             except Exception:
                 pass
         wanted = set(channels)
-        dead: list[_Sub] = []
-        for sub in self._subs:
-            if not (sub.channels & wanted):
-                continue
+        loop = self._loop
+        if loop is not None and loop.is_running():
             try:
-                sub.q.put_nowait(event)
-            except asyncio.QueueFull:
-                dead.append(sub)
-        for sub in dead:
-            self.unsubscribe(sub.q)
+                running = asyncio.get_running_loop()
+            except RuntimeError:
+                running = None
+            if running is not loop:
+                loop.call_soon_threadsafe(self._deliver, event, wanted)
+                return
+        self._deliver(event, wanted)
 
     async def start(self) -> None:
-        return None
+        self._loop = asyncio.get_running_loop()
 
     async def stop(self) -> None:
-        return None
+        self._loop = None
 
 
 bus = EventBus()

@@ -2,7 +2,7 @@
 
 База: `/api`. Интерактивно: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
-Авторизация: заголовок `Authorization: Bearer <token>` (кроме login, demo, health). SSE допускает `?token=`.
+Авторизация: заголовок `Authorization: Bearer <token>` (кроме login, demo, health, catalog, corridors). SSE: одноразовый `POST /api/tracking/ticket`, затем `GET /stream?ticket=…` (или Bearer в заголовке).
 
 Ответы ошибок FastAPI: `{"detail": "…"}`. Фронт показывает `detail` через `formatError`.
 
@@ -38,6 +38,7 @@
 |-----|--|
 | 401 | неверный логин/пароль |
 | 403 | учётка заблокирована |
+| 429 | слишком много неудачных попыток |
 
 ### `GET /api/auth/me`
 
@@ -66,12 +67,12 @@ Staff: супер-админ и админ. Создание и правки о�
   "role": "admin",
   "company": null,
   "phone": null,
-  "password": "demo",
+  "password": "secret12",
   "carrier_id": null
 }
 ```
 
-`role` по умолчанию `sender`. Ответ может содержать `initial_password`.
+`role` по умолчанию `sender`. `password` необязателен (минимум 6 символов); пустое поле — сервер генерирует и отдаёт `initial_password`.
 
 ### `PATCH /api/admin/users/{user_id}`
 
@@ -85,7 +86,7 @@ Staff: супер-админ и админ. Создание и правки о�
 ### `POST /api/admin/users/{user_id}/reset-password`
 
 ```json
-{ "password": "demo" }
+{ "password": "secret12" }
 ```
 
 Только админ. Ответ с `initial_password`.
@@ -211,11 +212,11 @@ Cancel: статусы из `CANCELLABLE`. Delete: `{ "ok": true }`.
   "driver_name": "Серик",
   "driver_email": "serik@carrier.kz",
   "driver_phone": "+7701…",
-  "driver_password": "demo"
+  "driver_password": "secret12"
 }
 ```
 
-`kind`: `tent` | `reefer` | `dump` | `flatbed`. `capacity_kg` `< 60000`. `home_id` — пункт каталога.
+`kind`: `tent` | `reefer` | `dump` | `flatbed`. `capacity_kg` `< 60000`. `home_id` — пункт каталога. `driver_password` необязателен (минимум 6); пусто — генерируется.
 
 409: госномер или email заняты. Ответ с `initial_password`.
 
@@ -237,14 +238,16 @@ Cancel: статусы из `CANCELLABLE`. Delete: `{ "ok": true }`.
 
 | Метод | Кто | Назначение |
 |-------|-----|------------|
-| `GET /stream` | любой залогиненный | SSE |
+| `POST /ticket` | любой залогиненный | одноразовый тикет SSE (TTL 60 с) |
+| `GET /stream` | тикет или Bearer | SSE |
+| `POST /arrive` | водитель | `assigned` → `arrived` |
 | `POST /arrive` | водитель | `assigned` → `arrived` |
 | `POST /start-loading` | водитель | `arrived` → `loading` |
 | `POST /start-route` | водитель | `loading` → `transit` + навигация |
 | `POST /complete-route` | водитель | `transit` → `delivered` |
 | `POST /stop-route` | водитель | остановить симулятор, статус заявки `transit` |
 | `POST /ping` | водитель | `{ "vehicle_id", "lat", "lon" }` — живой GPS |
-| `GET /{vehicle_id}/trail?limit=80` | кто видит борт | точки следа |
+| `GET /{vehicle_id}/trail?limit=80` | кто видит борт | точки следа (`limit` 1…500) |
 
 409, если нет рейса или этап не тот. 403, если не водитель.
 

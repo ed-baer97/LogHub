@@ -122,6 +122,7 @@ export default function ProfileForm({
             type="password"
             autoComplete="new-password"
             placeholder="оставьте пустым, если не менять"
+            minLength={6}
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
           />

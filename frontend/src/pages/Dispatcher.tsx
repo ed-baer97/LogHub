@@ -4,7 +4,7 @@ import MapView from "../components/MapView";
 import { BarList, ChartCard, DonutChart, MetricCard, SparkBars, ordersByDay, statusSlices } from "../components/Charts";
 import { useToast } from "../components/Toast";
 import ProfileForm from "../components/ProfileForm";
-import { api, apiList, errText, getStoredUser, streamUrl } from "../api";
+import { api, apiList, errText, getStoredUser, openEventStream } from "../api";
 import { formatKg, upsertVehicle } from "../lib/fleet";
 import { deltaLabel, fmtNum, orderCode } from "../lib/format";
 import { STATUS_RU, VEHICLE_STATUS_RU } from "../lib/labels";
@@ -129,20 +129,31 @@ export default function Dispatcher({ user, onUser }: { user: User; onUser: (user
       return () => clearInterval(tick);
     }
 
-    const es = new EventSource(streamUrl("/api/tracking/stream"));
-    es.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[]; id?: number };
-        if (data.type === "fleet" && data.vehicles) setVehicles(data.vehicles);
-        if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data as Vehicle));
-        if (data.type === "order") reload();
-      } catch {
-        /* keep last snapshot */
-      }
-    };
+    let es: EventSource | null = null;
+    let cancelled = false;
+    openEventStream()
+      .then((stream) => {
+        if (cancelled) {
+          stream.close();
+          return;
+        }
+        es = stream;
+        es.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[]; id?: number };
+            if (data.type === "fleet" && data.vehicles) setVehicles(data.vehicles);
+            if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data as Vehicle));
+            if (data.type === "order") reload();
+          } catch {
+            /* keep last snapshot */
+          }
+        };
+      })
+      .catch(() => undefined);
 
     return () => {
-      es.close();
+      cancelled = true;
+      es?.close();
       clearInterval(tick);
     };
   }, [isSuper, reload]);
@@ -1107,9 +1118,17 @@ function UsersTab({
     }
     setCreating(true);
     try {
+      const payload: Record<string, string> = {
+        email: form.email,
+        name: form.name,
+        role,
+        company: form.company,
+        phone: form.phone,
+      };
+      if (form.password.trim()) payload.password = form.password.trim();
       const created = await api<User>("/api/admin/users", {
         method: "POST",
-        body: JSON.stringify({ ...form, role }),
+        body: JSON.stringify(payload),
       });
       toast.ok(
         created.initial_password
@@ -1353,7 +1372,8 @@ function UsersTab({
               <label>
                 Пароль
                 <input
-                  required
+                  minLength={6}
+                  placeholder="пусто — сгенерируем"
                   value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
                 />

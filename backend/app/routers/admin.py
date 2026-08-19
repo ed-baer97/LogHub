@@ -1,11 +1,10 @@
-import secrets
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.access import require_admin_users, require_staff, require_superadmin
-from app.auth import get_current_user, hash_password
+from app.auth import bump_token_version, generate_password, get_current_user, hash_password
 from app.database import get_db
 from app.models import User
 from app.roles import ADMIN, CARRIER, SENDER, creatable_roles, is_admin, is_superadmin, normalize_role, ROLE_LABELS
@@ -35,7 +34,7 @@ def _to_out(user: User, initial: str | None = None) -> UserOut:
 
 
 def _temp_password() -> str:
-    return secrets.token_urlsafe(9)
+    return generate_password()
 
 
 @router.get("/role-options")
@@ -61,19 +60,20 @@ def create_user(body: UserCreate, db: DbDep, actor: StaffDep):
         raise HTTPException(403, "Админ создаёт только отправителей и перевозчиков")
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(409, "Email уже занят")
+    password = (body.password.strip() if body.password else "") or _temp_password()
     user = User(
         email=body.email,
         name=body.name,
         role=body.role,
         company=body.company,
         phone=body.phone,
-        password_hash=hash_password(body.password),
+        password_hash=hash_password(password),
         is_active=True,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    return _to_out(user, body.password)
+    return _to_out(user, password)
 
 
 def _manageable(actor: User, user: User) -> None:
@@ -99,10 +99,13 @@ def update_user(user_id: int, body: UserUpdate, db: DbDep, actor: Annotated[User
     _manageable(actor, user)
     if body.role is not None:
         _assert_can_assign_role(actor, body.role)
+    was_active = bool(getattr(user, "is_active", True))
     for field in ("name", "company", "phone", "role", "is_active"):
         value = getattr(body, field)
         if value is not None:
             setattr(user, field, value)
+    if was_active and body.is_active is False:
+        bump_token_version(user)
     db.commit()
     db.refresh(user)
     return _to_out(user)
@@ -115,6 +118,7 @@ def block_user(user_id: int, db: DbDep, actor: AdminUsersDep):
         raise HTTPException(404, "Пользователь не найден")
     _manageable(actor, user)
     user.is_active = False
+    bump_token_version(user)
     db.commit()
     db.refresh(user)
     return _to_out(user)
@@ -140,6 +144,7 @@ def reset_password(user_id: int, db: DbDep, actor: AdminUsersDep, body: Password
     _manageable(actor, user)
     password = (body.password.strip() if body and body.password else "") or _temp_password()
     user.password_hash = hash_password(password)
+    bump_token_version(user)
     db.commit()
     db.refresh(user)
     return _to_out(user, password)

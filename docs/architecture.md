@@ -85,7 +85,7 @@ scripts/backup-postgres.sh
 
 ## Realtime
 
-`GET /api/tracking/stream` — SSE. Токен: заголовок `Authorization: Bearer …` или query `?token=`.
+`GET /api/tracking/stream` — SSE. Сначала `POST /api/tracking/ticket` (Bearer), затем `?ticket=`. Заголовок `Authorization` тоже принимается.
 
 Первое событие после `hello` — снимок `fleet` (видимые борты, координаты из Redis если есть). Дальше только `vehicle` и `order`. Фильтр по `owner_id` / `driver_id` / `sender_id` без запроса в БД на каждый тик.
 
@@ -126,7 +126,7 @@ GPS с телефона необязателен. При Redis follow-loop в о
 
 ## Аутентификация
 
-JWT HS256, `sub` = id пользователя, срок `JWT_EXPIRE_HOURS` (по умолчанию 7 суток). Пароль: bcrypt. Старые SHA-256 хеши (`SECRET_KEY:password`) принимаются и при логине переписываются в bcrypt.
+- JWT HS256, `sub` = id пользователя, `ver` = `users.token_version`, срок `JWT_EXPIRE_HOURS` (по умолчанию 7 суток). Сброс пароля админом, смена пароля водителя перевозчиком и блокировка инкрементируют `ver` — старые токены перестают приниматься. Своя смена пароля сессию не рвёт. Пароль: bcrypt. Старые SHA-256 хеши (`SECRET_KEY:password`) принимаются и при логине переписываются в bcrypt.
 
 Фронт хранит токен и пользователя в `localStorage` (`caspian_token`, `caspian_user`).
 

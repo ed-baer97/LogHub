@@ -4,6 +4,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password
+from app.config import settings
 from app.models import HistoricalTrip, Order, RouteCache, Settlement, TrackPoint, User, Vehicle
 from app.services.geo import dump_coords, haversine_km, interpolate_line
 from app.services.osrm import fetch_osrm_route
@@ -122,6 +123,9 @@ def ensure_schema(db: Session) -> None:
     if "is_active" not in user_cols:
         db.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
         db.commit()
+    if "token_version" not in user_cols:
+        db.execute(text("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0"))
+        db.commit()
     sett_cols = {c["name"] for c in inspect(bind).get_columns("settlements")}
     if "sender_id" not in sett_cols:
         db.execute(text("ALTER TABLE settlements ADD COLUMN sender_id INTEGER"))
@@ -141,7 +145,7 @@ def ensure_superadmin(db: Session) -> User:
         role="superadmin",
         company="Caspian LogHub",
         phone="+7 7292 50 00 00",
-        password_hash=hash_password("demo"),
+        password_hash=hash_password(settings.superadmin_password),
     )
     db.add(row)
     db.commit()

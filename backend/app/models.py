@@ -18,6 +18,7 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     carrier_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     vehicles: Mapped[list["Vehicle"]] = relationship(back_populates="owner", foreign_keys="Vehicle.owner_id")
     sent_orders: Mapped[list["Order"]] = relationship(

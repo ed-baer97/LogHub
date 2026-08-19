@@ -3,7 +3,7 @@ import MapView from "../components/MapView";
 import DriverShell from "../components/DriverShell";
 import { useHeaderHint } from "../components/headerHint";
 import { useToast } from "../components/Toast";
-import { api, apiList, errText, streamUrl } from "../api";
+import { api, apiList, errText, openEventStream } from "../api";
 import { DRIVER_STAGE_RU } from "../lib/labels";
 import { formatKg, kindLabel, kmBetween } from "../lib/fleet";
 import type { Order, Settlement, User, Vehicle } from "../types";
@@ -80,26 +80,37 @@ export default function Driver({ user }: { user: User }) {
       setLoadErr(true);
       toast.err(errText(e));
     });
-    const es = new EventSource(streamUrl("/api/tracking/stream"));
-    es.onopen = () => setLink("ok");
-    es.onerror = () => setLink("off");
-    es.onmessage = (ev) => {
-      setLink("ok");
-      const data = JSON.parse(ev.data);
-      if (data.type === "fleet" && Array.isArray(data.vehicles)) {
-        const rows = data.vehicles as Vehicle[];
-        const mine = rows.find((v) => v.driver_id === user.id);
-        if (mine) setVehicle(mine);
-      }
-      if (data.type === "vehicle" && data.driver_id === user.id) {
-        setVehicle((prev) => (prev ? { ...prev, ...data } : (data as Vehicle)));
-      }
-      if (data.type === "order" || data.type === "order_new") {
-        loadFleet().catch(() => undefined);
-      }
-    };
+    let es: EventSource | null = null;
+    let cancelled = false;
+    openEventStream()
+      .then((stream) => {
+        if (cancelled) {
+          stream.close();
+          return;
+        }
+        es = stream;
+        es.onopen = () => setLink("ok");
+        es.onerror = () => setLink("off");
+        es.onmessage = (ev) => {
+          setLink("ok");
+          const data = JSON.parse(ev.data);
+          if (data.type === "fleet" && Array.isArray(data.vehicles)) {
+            const rows = data.vehicles as Vehicle[];
+            const mine = rows.find((v) => v.driver_id === user.id);
+            if (mine) setVehicle(mine);
+          }
+          if (data.type === "vehicle" && data.driver_id === user.id) {
+            setVehicle((prev) => (prev ? { ...prev, ...data } : (data as Vehicle)));
+          }
+          if (data.type === "order" || data.type === "order_new") {
+            loadFleet().catch(() => undefined);
+          }
+        };
+      })
+      .catch(() => setLink("off"));
     return () => {
-      es.close();
+      cancelled = true;
+      es?.close();
       if (watch.current != null) navigator.geolocation.clearWatch(watch.current);
     };
   }, [loadFleet, toast, user.id]);

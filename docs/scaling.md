@@ -56,9 +56,9 @@
 
 Сделано.
 
-- Nginx: gzip, `limit_req` 20 r/s, SSE без буфера (`/api/tracking/stream`, таймаут 3600 с). Реплики `backend` и `backend-2`, `least_conn`. Sticky sessions не нужны (JWT + Redis pub/sub).
-- Gateway на `:8000` — тот же upstream (Swagger, `/metrics`).
-- Gunicorn в Linux-контейнере: 2 × `UvicornWorker` на реплику, `--timeout 0` (иначе рвёт SSE). На Windows gunicorn нет — локально uvicorn.
+- Nginx: gzip, `limit_req` 20 r/s (по реальному IP за туннелем), 5 r/m на логин, SSE без буфера (`/api/tracking/stream`, таймаут 3600 с). Реплики `backend` и `backend-2`, `least_conn`. Sticky sessions не нужны (JWT + Redis pub/sub).
+- Gateway на `127.0.0.1:8000` — тот же upstream (Swagger, `/metrics`). Postgres на `127.0.0.1:5432`.
+- Gunicorn в Linux-контейнере: 2 × `UvicornWorker` на реплику, `--timeout 120`. На Windows gunicorn нет — локально uvicorn.
 - Миграции один раз: сервис `migrate` (`alembic upgrade head` прямо в Postgres).
 - PgBouncer session pool; API и worker ходят через него. DDL — в `migrate` мимо пула. `prepare_threshold=None` у psycopg3.
 - Медленные запросы Postgres: `log_min_duration_statement=500`.
@@ -74,7 +74,7 @@
 В Docker уже так:
 
 ```bash
-gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8000 --timeout 0
+gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8000 --timeout 120
 ```
 
 Две реплики × 2 воркера. На 1–2 vCPU не поднимайте `WEB_CONCURRENCY` без нужды — упираетесь в CPU и в PgBouncer. На Windows gunicorn не работает; в Linux-Docker — да.

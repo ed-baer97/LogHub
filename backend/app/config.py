@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./caspian.db"
     secret_key: str = "caspian-hackathon-secret"
+    superadmin_password: str = "demo"
     cors_origins: str = "http://localhost:5173,http://localhost:80,http://localhost,http://127.0.0.1:5173"
     osrm_url: str = "https://router.project-osrm.org"
     sim_speed_kmh: float = 420.0

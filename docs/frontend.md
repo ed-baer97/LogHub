@@ -19,7 +19,7 @@ SPA на React 18. Сборка Vite, карта MapLibre + OSM. Стили — 
 ## Общие механики
 
 - `api.ts` — `fetch` с Bearer, разбор ошибок; списки заявок/парка — `apiList` (конверт `{items, total}`).
-- `streamUrl` — SSE с `?token=`.
+- `openEventStream` — `POST /api/tracking/ticket`, затем SSE с `?ticket=`.
 - Тосты: пароль новой учётки показывается один раз.
 - Карта (`MapView`): пункты, борт, polyline рейса, след. У отправителя на вкладке «Пункты» клик ставит координаты новой точки.
 

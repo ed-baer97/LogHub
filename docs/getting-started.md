@@ -64,13 +64,13 @@ docker compose up -d postgres
 Windows PowerShell:
 
 ```powershell
-$env:DATABASE_URL="postgresql+psycopg://caspian:caspian@localhost:5432/caspian"
+$env:DATABASE_URL="postgresql+psycopg://caspian:YOUR_POSTGRES_PASSWORD@localhost:5432/caspian"
 ```
 
 Linux / macOS:
 
 ```bash
-export DATABASE_URL="postgresql+psycopg://caspian:caspian@localhost:5432/caspian"
+export DATABASE_URL="postgresql+psycopg://caspian:YOUR_POSTGRES_PASSWORD@localhost:5432/caspian"
 ```
 
 Затем из каталога `backend`: `alembic upgrade head` и перезапустить uvicorn.
@@ -83,7 +83,7 @@ export DATABASE_URL="postgresql+psycopg://caspian:caspian@localhost:5432/caspian
 |------|--------|--------|
 | Супер-админ | `superadmin@caspian.kz` | `demo` |
 
-Остальных заводите в интерфейсе. Пароль задаётся при создании (по умолчанию `demo`) и показывается **один раз** в тосте. В списках пользователей пароль больше не отдаётся. Заблокированная учётка не входит.
+Остальных заводите в интерфейсе. Пароль при создании можно оставить пустым — сервер сгенерирует и покажет **один раз** в тосте. В списках пользователей пароль больше не отдаётся. Заблокированная учётка не входит.
 
 ## Цепочка проверки с нуля
 

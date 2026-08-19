@@ -29,10 +29,9 @@ from app.services.redisutil import redis_enabled
 _tasks: dict[int, asyncio.Task] = {}
 
 
-def vehicle_payload(db: Session, v: Vehicle) -> dict:
+def vehicle_payload(db: Session, v: Vehicle, sender_id: int | None = None) -> dict:
     apply_live(v)
-    sender_id = None
-    if v.current_order_id:
+    if sender_id is None and v.current_order_id:
         order = db.get(Order, v.current_order_id)
         if order:
             sender_id = order.sender_id
@@ -56,7 +55,14 @@ def vehicle_payload(db: Session, v: Vehicle) -> dict:
 
 
 def fleet_snapshot(db: Session, vehicles: list[Vehicle]) -> dict:
-    return {"type": "fleet", "vehicles": [vehicle_payload(db, v) for v in vehicles]}
+    oids = [v.current_order_id for v in vehicles if v.current_order_id]
+    senders: dict[int, int] = {}
+    if oids:
+        senders = dict(db.query(Order.id, Order.sender_id).filter(Order.id.in_(oids)).all())
+    return {
+        "type": "fleet",
+        "vehicles": [vehicle_payload(db, v, senders.get(v.current_order_id)) for v in vehicles],
+    }
 
 
 def publish_vehicle(db: Session, vehicle: Vehicle) -> None:

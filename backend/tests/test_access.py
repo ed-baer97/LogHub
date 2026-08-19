@@ -249,7 +249,7 @@ def test_driver_updates_own_profile(client: TestClient, accounts):
         client.patch(
             "/api/auth/me",
             headers=d,
-            json={"email": "driver-profile2@test.kz", "password": "newer"},
+            json={"email": "driver-profile2@test.kz", "password": "newer1"},
         ).status_code
         == 400
     )
@@ -261,7 +261,7 @@ def test_driver_updates_own_profile(client: TestClient, accounts):
             "phone": "+77001112233",
             "email": "driver-profile2@test.kz",
             "current_password": "secret",
-            "password": "newer",
+            "password": "newer1",
         },
     )
     assert patched.status_code == 200, patched.text
@@ -269,7 +269,7 @@ def test_driver_updates_own_profile(client: TestClient, accounts):
     assert patched.json()["email"] == "driver-profile2@test.kz"
     assert patched.json()["phone"] == "+77001112233"
     assert "password" not in patched.json()
-    assert client.post("/api/auth/login", json={"email": "driver-profile2@test.kz", "password": "newer"}).status_code == 200
+    assert client.post("/api/auth/login", json={"email": "driver-profile2@test.kz", "password": "newer1"}).status_code == 200
     fleet = _items(client.get("/api/geo/vehicles", headers=c1).json())
     unit = next(v for v in fleet if v["id"] == bort.json()["id"])
     assert unit["driver_name"] == "Асылбек"

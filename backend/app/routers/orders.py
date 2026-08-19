@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from app.access import (
@@ -25,7 +26,7 @@ from app.schemas import OrderAssignIn, OrderCreate, OrderOut, OrderUpdate, Page,
 from app.services.cache import cache_get, cache_set
 from app.services.events import publish_order_event
 from app.services.matching import candidate_open_orders, match_for_vehicle, match_orders
-from app.services.osrm import ensure_route, get_cached_route, route_coords
+from app.services.osrm import ensure_route_sync, get_cached_route, route_coords
 from app.services.pricing import price_model
 from app.services.simulator import publish_vehicle
 
@@ -73,7 +74,7 @@ def _plate(db: Session, o: Order) -> str | None:
 
 
 @router.get("/quote", response_model=QuoteOut)
-async def quote(
+def quote(
     origin_id: int,
     dest_id: int,
     db: DbDep,
@@ -89,7 +90,7 @@ async def quote(
     cached = cache_get(cache_key)
     if isinstance(cached, dict):
         return QuoteOut(**cached)
-    route = await ensure_route(db, origin, dest)
+    route = ensure_route_sync(db, origin, dest)
     out = QuoteOut(
         distance_km=route.distance_km,
         duration_min=round(route.duration_s / 60, 0),
@@ -112,8 +113,12 @@ def list_orders(
     if status:
         q = q.filter(Order.status == status)
     rows, total, limit, offset = paginate(q, order_by=Order.id.desc(), limit=limit, offset=offset)
+    vids = [o.vehicle_id for o in rows if o.vehicle_id]
+    plates: dict[int, str] = {}
+    if vids:
+        plates = dict(db.query(Vehicle.id, Vehicle.plate).filter(Vehicle.id.in_(vids)).all())
     return Page(
-        items=[_out(o, _plate(db, o)) for o in rows],
+        items=[_out(o, plates.get(o.vehicle_id) if o.vehicle_id else None) for o in rows],
         total=total,
         limit=limit,
         offset=offset,
@@ -158,7 +163,7 @@ def get_order(order_id: int, db: DbDep, user: UserDep):
 
 
 @router.post("", response_model=OrderOut)
-async def create_order(
+def create_order(
     body: OrderCreate,
     db: DbDep,
     user: Annotated[User, Depends(require_roles(SENDER))],
@@ -167,7 +172,7 @@ async def create_order(
     dest = get_usable_point(db, user, body.dest_id)
     if origin.id == dest.id:
         raise HTTPException(400, "Откуда и куда совпадают")
-    route = await ensure_route(db, origin, dest)
+    route = ensure_route_sync(db, origin, dest)
     rec = price_model.predict(route.distance_km, body.weight_kg, body.cargo_type)
     offered = body.price_offered or rec
     o = Order(
@@ -190,7 +195,7 @@ async def create_order(
 
 
 @router.patch("/{order_id}", response_model=OrderOut)
-async def update_order(
+def update_order(
     order_id: int,
     body: OrderUpdate,
     db: DbDep,
@@ -206,7 +211,7 @@ async def update_order(
     if origin.id == dest.id:
         raise HTTPException(400, "Откуда и куда совпадают")
     if body.origin_id or body.dest_id or body.weight_kg or body.cargo_type:
-        route = await ensure_route(db, origin, dest)
+        route = ensure_route_sync(db, origin, dest)
         o.origin_id = origin.id
         o.dest_id = dest.id
         o.distance_km = route.distance_km
@@ -266,15 +271,19 @@ def take_order(
     user: Annotated[User, Depends(require_roles(CARRIER))],
     body: TakeOrderIn | None = None,
 ):
-    o = get_order_or_404(db, user, order_id)
-    if o.status != "open":
+    get_order_or_404(db, user, order_id)
+    taken_at = datetime.utcnow()
+    result = db.execute(
+        update(Order)
+        .where(Order.id == order_id, Order.status == "open")
+        .values(status="taken", carrier_id=user.id, taken_at=taken_at)
+    )
+    if result.rowcount != 1:
+        db.rollback()
         raise HTTPException(409, "Заявка уже занята")
-    o.status = "taken"
-    o.carrier_id = user.id
-    o.taken_at = datetime.utcnow()
     db.commit()
+    o = get_order_or_404(db, user, order_id)
     publish_order_event(o, status="taken")
-    o = get_order_or_404(db, user, o.id)
     return _out(o)
 
 
@@ -284,6 +293,17 @@ def _assign_to_vehicle(db: Session, o: Order, v: Vehicle) -> None:
     if hints:
         o.empty_km_saved = hints[0]["empty_km_saved"]
         o.is_backhaul = True
+    result = db.execute(
+        update(Vehicle)
+        .where(
+            Vehicle.id == v.id,
+            Vehicle.active.is_(True),
+            or_(Vehicle.current_order_id.is_(None), Vehicle.current_order_id == o.id),
+        )
+        .values(current_order_id=o.id, status="assigned")
+    )
+    if result.rowcount != 1:
+        raise HTTPException(409, "Борт уже в рейсе")
     if o.vehicle_id and o.vehicle_id != v.id:
         old = db.get(Vehicle, o.vehicle_id)
         if old and old.current_order_id == o.id:
@@ -291,8 +311,7 @@ def _assign_to_vehicle(db: Session, o: Order, v: Vehicle) -> None:
             old.status = "idle"
     o.vehicle_id = v.id
     o.status = "assigned"
-    v.current_order_id = o.id
-    v.status = "assigned"
+    db.refresh(v)
 
 
 @router.post("/{order_id}/assign", response_model=OrderOut)

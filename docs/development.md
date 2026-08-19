@@ -7,7 +7,8 @@
 | Переменная | По умолчанию | Смысл |
 |------------|----------------|--------|
 | `DATABASE_URL` | `sqlite:///./caspian.db` | PostgreSQL: `postgresql+psycopg://caspian:caspian@localhost:5432/caspian` |
-| `SECRET_KEY` | `caspian-hackathon-secret` | JWT и бывший SHA-256 |
+| `SECRET_KEY` | `caspian-hackathon-secret` | JWT (в Docker — из `.env`, обязателен) |
+| `SUPERADMIN_PASSWORD` | `demo` | пароль сида супер-админа (в Docker — из `.env`) |
 | `JWT_EXPIRE_HOURS` | `168` | срок токена (7 суток) |
 | `REDIS_URL` | пусто | `redis://localhost:6379/0`; пусто = SSE и навигация в памяти |
 | `PING_MIN_INTERVAL_S` | `3` | лимит GPS ping |
@@ -16,12 +17,12 @@
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `10` / `20` | пул SQLAlchemy (не SQLite); в Compose 5 / 10 за PgBouncer |
 | `CACHE_TTL_S` | `45` | Redis-кэш quote и analytics summary |
 | `WEB_CONCURRENCY` | `2` | воркеры gunicorn в Docker |
-| `CORS_ORIGINS` | localhost:5173, :80, … | список через запятую; в `main` дополнительно `*` |
+| `CORS_ORIGINS` | localhost:5173, :80, … | список через запятую |
 | `OSRM_URL` | `https://router.project-osrm.org` | в Compose — `http://osrm:5000` |
 | `SIM_SPEED_KMH` | `420` | ускорение демо |
 | `SIM_TICK_S` | `1.5` | шаг симулятора |
 
-Compose задаёт `DATABASE_URL` на PgBouncer, `REDIS_URL`, `OSRM_URL=http://osrm:5000`, `SECRET_KEY`, `CORS_ORIGINS`, `WEB_CONCURRENCY`.
+Compose задаёт `DATABASE_URL` на PgBouncer, `REDIS_URL`, `OSRM_URL=http://osrm:5000`, `SECRET_KEY`, `SUPERADMIN_PASSWORD`, `CORS_ORIGINS`, `WEB_CONCURRENCY` из корневого `.env` (см. `.env.example`).
 
 Не коммитить `.env` и `*.db` (см. `.gitignore`).
 

@@ -1,6 +1,7 @@
 x-backend-env: &backend-env
-  DATABASE_URL: postgresql+psycopg://caspian:caspian@pgbouncer:5432/caspian
-  SECRET_KEY: caspian-hackathon-secret
+  DATABASE_URL: postgresql+psycopg://caspian:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@pgbouncer:5432/caspian
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+  SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?set SUPERADMIN_PASSWORD in .env}
   CORS_ORIGINS: http://localhost,http://localhost:80,http://localhost:5173,http://127.0.0.1
   REDIS_URL: redis://redis:6379/0
   OSRM_URL: http://osrm:5000
@@ -35,7 +36,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: caspian
-      POSTGRES_PASSWORD: caspian
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: caspian
     command:
       - postgres
@@ -44,7 +45,7 @@ services:
       - -c
       - log_checkpoints=on
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -56,9 +57,9 @@ services:
   pgbouncer:
     image: edoburu/pgbouncer:1.23.1-p3
     environment:
-      DATABASE_URL: postgres://caspian:caspian@postgres:5432/caspian
+      DATABASE_URL: postgres://caspian:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caspian
       AUTH_TYPE: scram-sha-256
-      POOL_MODE: session
+      POOL_MODE: transaction
       MAX_CLIENT_CONN: 200
       DEFAULT_POOL_SIZE: 25
       MIN_POOL_SIZE: 2
@@ -103,7 +104,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg://caspian:caspian@postgres:5432/caspian
+      DATABASE_URL: postgresql+psycopg://caspian:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caspian
     restart: "no"
 
   backend:
@@ -137,7 +138,7 @@ services:
     volumes:
       - ./deploy/nginx-gateway.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "8000:80"
+      - "127.0.0.1:8000:80"
     restart: unless-stopped
 
   frontend:
@@ -157,7 +158,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      PGPASSWORD: caspian
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - ./backups:/backups
     entrypoint: ["/bin/sh", "-c"]

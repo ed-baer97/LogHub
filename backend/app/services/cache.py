@@ -30,3 +30,21 @@ def cache_set(key: str, value: Any, ttl: int) -> None:
         client.set(key, json.dumps(value, default=str), ex=ttl)
     except Exception:
         return
+
+
+TRACK_COUNT_KEY = "metrics:track_points"
+
+
+def track_points_count(db) -> int | None:
+    cached = cache_get(TRACK_COUNT_KEY)
+    if isinstance(cached, int):
+        return cached
+    try:
+        from sqlalchemy import func
+        from app.models import TrackPoint
+
+        n = int(db.query(func.count(TrackPoint.id)).scalar() or 0)
+    except Exception:
+        return None
+    cache_set(TRACK_COUNT_KEY, n, 60)
+    return n

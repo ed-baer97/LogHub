@@ -23,10 +23,10 @@ export function clearSession() {
   localStorage.removeItem(USER);
 }
 
-export function streamUrl(path: string) {
-  const token = getToken();
+export async function openEventStream(path = "/api/tracking/stream"): Promise<EventSource> {
+  const { ticket } = await api<{ ticket: string }>("/api/tracking/ticket", { method: "POST" });
   const join = path.includes("?") ? "&" : "?";
-  return token ? `${path}${join}token=${encodeURIComponent(token)}` : path;
+  return new EventSource(`${path}${join}ticket=${encodeURIComponent(ticket)}`);
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

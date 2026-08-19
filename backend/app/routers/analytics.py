@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session, aliased
 from app.access import require_staff
 from app.config import settings
 from app.database import get_db
-from app.models import HistoricalTrip, Order, Settlement, TrackPoint, User, Vehicle
+from app.models import HistoricalTrip, Order, Settlement, User, Vehicle
 from app.roles import is_superadmin
-from app.services.cache import cache_get, cache_set
+from app.services.cache import cache_get, cache_set, track_points_count
 from app.services.matching import DIESEL_KZT_PER_L, DIESEL_L_PER_100KM
 from app.services.metrics import arq_queue_len, instance_id, sse_total
 
@@ -110,7 +110,7 @@ def summary(db: DbDep, user: StaffDep):
 
 @router.get("/ops")
 def ops(db: DbDep, user: StaffDep):
-    tracks = int(db.query(func.count(TrackPoint.id)).scalar() or 0)
+    tracks = track_points_count(db) or 0
     return {
         "instance": instance_id(),
         "track_points": tracks,

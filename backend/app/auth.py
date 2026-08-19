@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -15,10 +16,15 @@ from app.database import get_db
 from app.models import User
 
 _JWT_ALG = "HS256"
+MIN_PASSWORD_LEN = 6
 
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def generate_password() -> str:
+    return secrets.token_urlsafe(9)
 
 
 def is_legacy_hash(stored: str) -> bool:
@@ -39,22 +45,45 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(_legacy_hash(password), stored)
 
 
-def issue_token(user_id: int) -> str:
+def bump_token_version(user: User) -> None:
+    user.token_version = int(getattr(user, "token_version", 0) or 0) + 1
+
+
+def issue_token(user_id: int, token_version: int = 0) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
+        "ver": int(token_version or 0),
         "iat": now,
         "exp": now + timedelta(hours=settings.jwt_expire_hours),
     }
     return jwt.encode(payload, settings.secret_key, algorithm=_JWT_ALG)
 
 
-def user_id_from_token(token: str) -> int | None:
+def decode_token(token: str) -> tuple[int, int] | None:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[_JWT_ALG])
-        return int(payload["sub"])
+        return int(payload["sub"]), int(payload.get("ver") or 0)
     except (jwt.PyJWTError, TypeError, ValueError):
         return None
+
+
+def user_id_from_token(token: str) -> int | None:
+    decoded = decode_token(token)
+    return decoded[0] if decoded else None
+
+
+def load_user_from_token(db: Session, token: str) -> User | None:
+    decoded = decode_token(token)
+    if not decoded:
+        return None
+    user_id, ver = decoded
+    user = db.get(User, user_id)
+    if not user:
+        return None
+    if int(getattr(user, "token_version", 0) or 0) != ver:
+        return None
+    return user
 
 
 def get_current_user(
@@ -66,25 +95,9 @@ def get_current_user(
         token = authorization.split(" ", 1)[1].strip()
     if not token:
         raise HTTPException(401, "Нужна авторизация")
-    user_id = user_id_from_token(token)
-    if not user_id:
-        raise HTTPException(401, "Сессия истекла")
-    user = db.get(User, user_id)
+    user = load_user_from_token(db, token)
     if not user:
-        raise HTTPException(401, "Пользователь не найден")
+        raise HTTPException(401, "Сессия истекла")
     if not getattr(user, "is_active", True):
         raise HTTPException(403, "Учётная запись заблокирована")
     return user
-
-
-def get_optional_user(
-    db: Annotated[Session, Depends(get_db)],
-    authorization: Annotated[str | None, Header()] = None,
-) -> User | None:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        return None
-    token = authorization.split(" ", 1)[1].strip()
-    user_id = user_id_from_token(token)
-    if not user_id:
-        return None
-    return db.get(User, user_id)

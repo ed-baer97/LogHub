@@ -57,7 +57,7 @@ class ProfileUpdate(BaseModel):
     email: str | None = None
     phone: str | None = None
     current_password: str | None = None
-    password: str | None = None
+    password: str | None = Field(default=None, min_length=6)
 
 
 class TokenOut(BaseModel):
@@ -173,7 +173,7 @@ class UserCreate(BaseModel):
     role: str = "sender"
     company: str | None = None
     phone: str | None = None
-    password: str = "demo"
+    password: str | None = Field(default=None, min_length=6)
     carrier_id: int | None = None
 
 
@@ -186,7 +186,7 @@ class UserUpdate(BaseModel):
 
 
 class PasswordResetIn(BaseModel):
-    password: str | None = None
+    password: str | None = Field(default=None, min_length=6)
 
 
 class SettlementCreate(BaseModel):
@@ -219,7 +219,7 @@ class BortCreate(BaseModel):
     driver_name: str
     driver_email: str
     driver_phone: str | None = None
-    driver_password: str = "demo"
+    driver_password: str | None = Field(default=None, min_length=6)
 
 
 class BortUpdate(BaseModel):
@@ -230,6 +230,6 @@ class BortUpdate(BaseModel):
     driver_name: str | None = None
     driver_phone: str | None = None
     driver_email: str | None = None
-    driver_password: str | None = None
+    driver_password: str | None = Field(default=None, min_length=6)
     driver_active: bool | None = None
     active: bool | None = None

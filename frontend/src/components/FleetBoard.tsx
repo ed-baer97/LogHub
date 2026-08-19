@@ -564,6 +564,7 @@ function EditModal({
             Новый пароль
             <input
               placeholder="оставьте пустым, если не менять"
+              minLength={6}
               value={edit.driver_password}
               onChange={(e) => setEdit({ ...edit, driver_password: e.target.value })}
             />

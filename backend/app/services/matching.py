@@ -14,7 +14,29 @@ MAX_DETOUR_KM = 90.0
 BBOX_PAD_DEG = 0.85
 
 
-def _dist(db: Session, a: Settlement, b: Settlement) -> float:
+def _route_map(db: Session, pairs: set[tuple[int, int]]) -> dict[tuple[int, int], RouteCache]:
+    if not pairs:
+        return {}
+    ids = {a for a, b in pairs} | {b for a, b in pairs}
+    rows = (
+        db.query(RouteCache)
+        .filter(RouteCache.origin_id.in_(ids), RouteCache.dest_id.in_(ids))
+        .all()
+    )
+    return {(r.origin_id, r.dest_id): r for r in rows}
+
+
+def _dist(
+    db: Session,
+    a: Settlement,
+    b: Settlement,
+    routes: dict[tuple[int, int], RouteCache] | None = None,
+) -> float:
+    if routes is not None:
+        cached = routes.get((a.id, b.id)) or routes.get((b.id, a.id))
+        if cached:
+            return cached.distance_km
+        return haversine_km(a.lat, a.lon, b.lat, b.lon) * 1.32
     cached = get_cached_route(db, a.id, b.id)
     if cached:
         return cached.distance_km
@@ -55,8 +77,14 @@ def match_orders(
     orders: list[Order],
 ) -> list[dict]:
     """Find cargo that fits the corridor origin->dest (backhaul / попутка)."""
-    direct = _dist(db, origin, dest)
-    cached: RouteCache | None = get_cached_route(db, origin.id, dest.id)
+    pairs: set[tuple[int, int]] = {(origin.id, dest.id)}
+    for order in orders:
+        pairs.add((origin.id, order.origin.id))
+        pairs.add((order.origin.id, order.dest.id))
+        pairs.add((order.dest.id, dest.id))
+    routes = _route_map(db, pairs)
+    direct = _dist(db, origin, dest, routes)
+    cached = routes.get((origin.id, dest.id)) or get_cached_route(db, origin.id, dest.id)
     coords = route_coords(cached) if cached else None
     results: list[dict] = []
     for order in orders:
@@ -71,9 +99,9 @@ def match_orders(
             else haversine_km(dest.lat, dest.lon, order.dest.lat, order.dest.lon)
         )
         via = (
-            _dist(db, origin, order.origin)
-            + _dist(db, order.origin, order.dest)
-            + _dist(db, order.dest, dest)
+            _dist(db, origin, order.origin, routes)
+            + _dist(db, order.origin, order.dest, routes)
+            + _dist(db, order.dest, dest, routes)
         )
         detour = max(0.0, via - direct)
         near_start = haversine_km(origin.lat, origin.lon, order.origin.lat, order.origin.lon) < 40
@@ -85,7 +113,7 @@ def match_orders(
         in_corridor = pickup_to_line <= CORRIDOR_KM and drop_to_line <= CORRIDOR_KM and detour <= MAX_DETOUR_KM
         if not (backhaul or in_corridor):
             continue
-        loaded = _dist(db, order.origin, order.dest)
+        loaded = _dist(db, order.origin, order.dest, routes)
         empty_without = direct  # return empty along this leg
         empty_with = max(0.0, detour)
         saved = max(0.0, empty_without - empty_with)

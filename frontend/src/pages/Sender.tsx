@@ -4,7 +4,7 @@ import Empty, { Skeleton } from "../components/Empty";
 import MapView from "../components/MapView";
 import OrderPanel from "../components/OrderPanel";
 import { useToast } from "../components/Toast";
-import { api, apiList, errText, streamUrl } from "../api";
+import { api, apiList, errText, openEventStream } from "../api";
 import { formatKg, upsertVehicle } from "../lib/fleet";
 import { fmtNum, orderCode } from "../lib/format";
 import { PLACE_KIND_RU, STATUS_RU } from "../lib/labels";
@@ -117,18 +117,31 @@ export default function Sender({ user, onUser }: { user: User; onUser: (user: Us
 
   useEffect(() => {
     reload();
-    const es = new EventSource(streamUrl("/api/tracking/stream"));
-    es.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[]; id?: number };
-        if (data.type === "fleet") setVehicles(data.vehicles ?? []);
-        if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data as Vehicle));
-        if (data.type === "order" || data.type === "order_new") reload();
-      } catch {
-        /* keep last snapshot */
-      }
+    let es: EventSource | null = null;
+    let cancelled = false;
+    openEventStream()
+      .then((stream) => {
+        if (cancelled) {
+          stream.close();
+          return;
+        }
+        es = stream;
+        es.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data) as { type?: string; vehicles?: Vehicle[]; id?: number };
+            if (data.type === "fleet") setVehicles(data.vehicles ?? []);
+            if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data as Vehicle));
+            if (data.type === "order" || data.type === "order_new") reload();
+          } catch {
+            /* keep last snapshot */
+          }
+        };
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      es?.close();
     };
-    return () => es.close();
   }, [reload]);
 
   useEffect(() => {

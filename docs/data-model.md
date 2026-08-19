@@ -33,6 +33,7 @@ Vehicle ── Order.vehicle_id / Vehicle.current_order_id
 | `phone` | string(32) | |
 | `carrier_id` | FK users, nullable | у водителя — свой перевозчик |
 | `is_active` | bool | блокировка входа |
+| `token_version` | int, default 0 | клейм `ver` в JWT; инкремент при сбросе пароля и блокировке |
 
 ## `settlements`
 

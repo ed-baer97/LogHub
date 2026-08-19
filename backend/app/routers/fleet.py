@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.access import get_owned_vehicle, require_roles
-from app.auth import hash_password
+from app.auth import bump_token_version, generate_password, hash_password
 from app.database import get_db
 from app.models import Settlement, User, Vehicle
 from app.paging import page_params, paginate
@@ -64,13 +64,14 @@ def create_bort(body: BortCreate, db: DbDep, user: CarrierDep):
     home = db.get(Settlement, body.home_id)
     if not home or home.sender_id is not None:
         raise HTTPException(404, "База (пункт) не найдена")
+    password = (body.driver_password or "").strip() or generate_password()
     driver = User(
         email=body.driver_email,
         name=body.driver_name,
         role="driver",
         company=user.company,
         phone=body.driver_phone,
-        password_hash=hash_password(body.driver_password),
+        password_hash=hash_password(password),
         carrier_id=user.id,
         is_active=True,
     )
@@ -94,7 +95,7 @@ def create_bort(body: BortCreate, db: DbDep, user: CarrierDep):
     db.commit()
     v = db.query(Vehicle).options(joinedload(Vehicle.assigned_driver)).filter(Vehicle.id == v.id).one()
     publish_vehicle(db, v)
-    return _vehicle_out(v, body.driver_password)
+    return _vehicle_out(v, password)
 
 
 @router.patch("/borts/{vehicle_id}", response_model=VehicleOut)
@@ -134,6 +135,7 @@ def update_bort(vehicle_id: int, body: BortUpdate, db: DbDep, user: CarrierDep):
         driver = db.get(User, v.driver_id)
         if driver:
             driver.password_hash = hash_password(body.driver_password)
+            bump_token_version(driver)
             initial = body.driver_password
     if body.driver_active is not None and v.driver_id:
         if body.driver_active is False and v.current_order_id:
@@ -141,6 +143,8 @@ def update_bort(vehicle_id: int, body: BortUpdate, db: DbDep, user: CarrierDep):
         driver = db.get(User, v.driver_id)
         if driver:
             driver.is_active = body.driver_active
+            if body.driver_active is False:
+                bump_token_version(driver)
     db.commit()
     v = db.query(Vehicle).options(joinedload(Vehicle.assigned_driver)).filter(Vehicle.id == v.id).one()
     publish_vehicle(db, v)

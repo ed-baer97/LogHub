@@ -3,13 +3,12 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
-from app.models import TrackPoint
 from app.routers import admin, analytics, auth, fleet, geo, orders, tracking
 from app.seed import seed_if_empty
+from app.services.cache import track_points_count
 from app.services.events import bus
 from app.services.metrics import RequestMetricsMiddleware, instance_id, prometheus_response
 
@@ -33,7 +32,7 @@ app = FastAPI(title="Caspian LogHub", version="1.0.0", lifespan=lifespan)
 app.add_middleware(RequestMetricsMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list + ["*"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,9 +56,7 @@ def health():
 def metrics():
     db = SessionLocal()
     try:
-        n = int(db.query(func.count(TrackPoint.id)).scalar() or 0)
-    except Exception:
-        n = None
+        n = track_points_count(db)
     finally:
         db.close()
     return prometheus_response(n)

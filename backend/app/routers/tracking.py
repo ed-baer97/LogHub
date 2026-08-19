@@ -16,13 +16,14 @@ from app.access import (
     sse_channels,
     visible_vehicles_query,
 )
-from app.auth import get_current_user, user_id_from_token
+from app.auth import get_current_user, load_user_from_token
 from app.database import SessionLocal, get_db
 from app.models import Order, TrackPoint, User, Vehicle
 from app.roles import DRIVER
 from app.schemas import TrackPingIn, VehicleIdIn
 from app.services.events import iter_channel_events, publish_order_event
 from app.services.live import persist_track
+from app.services.tickets import consume_ticket, issue_ticket
 from app.services.simulator import (
     clear_plan,
     fleet_snapshot,
@@ -38,29 +39,39 @@ DriverDep = Annotated[User, Depends(require_roles(DRIVER))]
 UserDep = Annotated[User, Depends(get_current_user)]
 
 
-def _user_from_token(db: Session, authorization: str | None, token: str | None) -> User:
-    raw = token
-    if not raw and authorization and authorization.lower().startswith("bearer "):
+def _user_from_stream(db: Session, authorization: str | None, ticket: str | None) -> User:
+    if ticket:
+        user_id = consume_ticket(ticket)
+        if not user_id:
+            raise HTTPException(401, "Сессия истекла")
+        user = db.get(User, user_id)
+        if not user or not getattr(user, "is_active", True):
+            raise HTTPException(401, "Пользователь не найден")
+        return user
+    raw = None
+    if authorization and authorization.lower().startswith("bearer "):
         raw = authorization.split(" ", 1)[1].strip()
     if not raw:
         raise HTTPException(401, "Нужна авторизация")
-    user_id = user_id_from_token(raw)
-    if not user_id:
-        raise HTTPException(401, "Сессия истекла")
-    user = db.get(User, user_id)
+    user = load_user_from_token(db, raw)
     if not user or not getattr(user, "is_active", True):
-        raise HTTPException(401, "Пользователь не найден")
+        raise HTTPException(401, "Сессия истекла")
     return user
+
+
+@router.post("/ticket")
+def stream_ticket(user: UserDep):
+    return {"ticket": issue_ticket(user.id)}
 
 
 @router.get("/stream")
 async def stream(
-    token: str | None = Query(default=None),
+    ticket: str | None = Query(default=None),
     authorization: Annotated[str | None, Header()] = None,
 ):
     db = SessionLocal()
     try:
-        user = _user_from_token(db, authorization, token)
+        user = _user_from_stream(db, authorization, ticket)
         actor = SimpleNamespace(id=user.id, role=user.role)
         channels = sse_channels(db, user)
         board = _driver_vehicle(db, user)
@@ -133,6 +144,7 @@ def start_loading(body: VehicleIdIn, db: DbDep, user: DriverDep):
 
 @router.post("/start-route")
 async def start_route(body: VehicleIdIn, db: DbDep, user: DriverDep):
+    # Async: start_navigation needs the event loop to spawn the follow task.
     v, order = _trip_order(db, user, body.vehicle_id)
     if order.status != "loading":
         raise HTTPException(409, "Сначала зафиксируйте погрузку")
@@ -190,7 +202,7 @@ def ping(body: TrackPingIn, db: DbDep, user: DriverDep):
 
 
 @router.get("/{vehicle_id}/trail")
-def trail(vehicle_id: int, db: DbDep, user: UserDep, limit: int = 80):
+def trail(vehicle_id: int, db: DbDep, user: UserDep, limit: int = Query(80, ge=1, le=500)):
     v = db.get(Vehicle, vehicle_id)
     if not v or not can_read_vehicle(db, user, v):
         raise HTTPException(404, "Борт не найден")

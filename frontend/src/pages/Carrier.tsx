@@ -3,7 +3,7 @@ import { BarList, ChartCard, DonutChart, MetricCard, SparkBars, ordersByDay, sta
 import Empty, { Skeleton } from "../components/Empty";
 import MapView from "../components/MapView";
 import { useToast } from "../components/Toast";
-import { api, apiList, errText, streamUrl } from "../api";
+import { api, apiList, errText, openEventStream } from "../api";
 import FleetBoard from "../components/FleetBoard";
 import { FLEET_STATUS_RU, fleetUiStatus, tripForVehicle, upsertVehicle } from "../lib/fleet";
 import { fmtNum } from "../lib/format";
@@ -78,14 +78,27 @@ export default function Carrier({ user, onUser }: { user: User; onUser: (user: U
     load()
       .catch((e) => toast.err(errText(e)))
       .finally(() => setLoading(false));
-    const es = new EventSource(streamUrl("/api/tracking/stream"));
-    es.onmessage = (ev) => {
-      const data = JSON.parse(ev.data);
-      if (data.type === "fleet") setVehicles(data.vehicles ?? []);
-      if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data));
-      if (data.type === "order" || data.type === "order_new") load().catch(() => undefined);
+    let es: EventSource | null = null;
+    let cancelled = false;
+    openEventStream()
+      .then((stream) => {
+        if (cancelled) {
+          stream.close();
+          return;
+        }
+        es = stream;
+        es.onmessage = (ev) => {
+          const data = JSON.parse(ev.data);
+          if (data.type === "fleet") setVehicles(data.vehicles ?? []);
+          if (data.type === "vehicle" && data.id) setVehicles((rows) => upsertVehicle(rows, data));
+          if (data.type === "order" || data.type === "order_new") load().catch(() => undefined);
+        };
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      es?.close();
     };
-    return () => es.close();
   }, [load, toast]);
 
   useEffect(() => {
