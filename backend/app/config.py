@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     osrm_url: str = "https://router.project-osrm.org"
     sim_speed_kmh: float = 420.0  # accelerated so the pitch demo is visible
     sim_tick_s: float = 1.5
+    redis_url: str = ""
+    jwt_expire_hours: int = 168
 
     @property
     def cors_origin_list(self) -> list[str]:

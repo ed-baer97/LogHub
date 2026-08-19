@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.access import can_read_vehicle, filter_fleet_event, get_driver_vehicle, require_roles
-from app.auth import SESSIONS, get_current_user
+from app.auth import get_current_user, user_id_from_token
 from app.database import SessionLocal, get_db
 from app.models import Order, TrackPoint, User, Vehicle
 from app.roles import DRIVER
@@ -28,7 +28,7 @@ def _user_from_token(db: Session, authorization: str | None, token: str | None) 
         raw = authorization.split(" ", 1)[1].strip()
     if not raw:
         raise HTTPException(401, "Нужна авторизация")
-    user_id = SESSIONS.get(raw)
+    user_id = user_id_from_token(raw)
     if not user_id:
         raise HTTPException(401, "Сессия истекла")
     user = db.get(User, user_id)

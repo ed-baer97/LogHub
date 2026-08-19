@@ -23,6 +23,7 @@ Windows PowerShell:
 ```powershell
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -31,15 +32,16 @@ Linux / macOS:
 ```bash
 source .venv/bin/activate
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-При старте создаются таблицы, справочник населённых пунктов Мангистау и супер-админ. Заявок, парка и прочих учёток нет.
+Перед стартом накатите схему: `alembic upgrade head`. Затем справочник населённых пунктов Мангистау и супер-админ. Заявок, парка и прочих учёток нет.
 
 Swagger: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)  
 Health: [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)
 
-Сессии живут в памяти процесса uvicorn. После перезапуска войдите снова.
+JWT переживает перезапуск uvicorn (срок по умолчанию 7 суток). Redis для локального SSE не обязателен.
 
 ### 2. Frontend
 
@@ -71,7 +73,7 @@ Linux / macOS:
 export DATABASE_URL="postgresql+psycopg://caspian:caspian@localhost:5432/caspian"
 ```
 
-Затем перезапустить uvicorn.
+Затем из каталога `backend`: `alembic upgrade head` и перезапустить uvicorn.
 
 ## Вход
 

@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user, hash_password, issue_token, verify_password
+from app.auth import get_current_user, hash_password, is_legacy_hash, issue_token, verify_password
 from app.database import get_db
 from app.models import User, Vehicle
 from app.schemas import LoginIn, ProfileUpdate, TokenOut, UserOut
@@ -27,6 +27,10 @@ def login(body: LoginIn, db: Annotated[Session, Depends(get_db)]):
         raise HTTPException(401, "Неверный логин или пароль")
     if not getattr(user, "is_active", True):
         raise HTTPException(403, "Учётная запись заблокирована")
+    if is_legacy_hash(user.password_hash):
+        user.password_hash = hash_password(body.password)
+        db.commit()
+        db.refresh(user)
     return TokenOut(token=issue_token(user.id), user=UserOut.model_validate(user))
 
 
@@ -63,7 +67,6 @@ def update_me(
         if len(body.password) < 4:
             raise HTTPException(400, "Пароль слишком короткий")
         user.password_hash = hash_password(body.password)
-        user.password_plain = body.password
     db.commit()
     db.refresh(user)
     return user

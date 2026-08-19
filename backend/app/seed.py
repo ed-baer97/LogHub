@@ -106,11 +106,12 @@ def ensure_schema(db: Session) -> None:
         db.execute(text("ALTER TABLE users ADD COLUMN carrier_id INTEGER"))
         db.commit()
         user_cols.add("carrier_id")
-    if "password_plain" not in user_cols:
-        db.execute(text("ALTER TABLE users ADD COLUMN password_plain VARCHAR(120)"))
-        db.commit()
-        db.execute(text("UPDATE users SET password_plain = 'demo' WHERE password_plain IS NULL"))
-        db.commit()
+    if "password_plain" in user_cols:
+        try:
+            db.execute(text("ALTER TABLE users DROP COLUMN password_plain"))
+            db.commit()
+        except Exception:
+            db.rollback()
     veh_cols = {c["name"] for c in inspect(bind).get_columns("vehicles")}
     if "driver_id" not in veh_cols:
         db.execute(text("ALTER TABLE vehicles ADD COLUMN driver_id INTEGER"))
@@ -132,8 +133,6 @@ def ensure_superadmin(db: Session) -> User:
     if row:
         if row.role != "superadmin":
             row.role = "superadmin"
-        if not row.password_plain:
-            row.password_plain = "demo"
         db.commit()
         return row
     row = User(
@@ -143,7 +142,6 @@ def ensure_superadmin(db: Session) -> User:
         company="Caspian LogHub",
         phone="+7 7292 50 00 00",
         password_hash=hash_password("demo"),
-        password_plain="demo",
     )
     db.add(row)
     db.commit()

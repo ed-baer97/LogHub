@@ -1,6 +1,6 @@
 # Модель данных
 
-ORM — SQLAlchemy 2 (`backend/app/models.py`). Миграций Alembic нет: `create_all` плюс точечные `ALTER` в `ensure_schema`.
+ORM — SQLAlchemy 2 (`backend/app/models.py`). Схема: Alembic (`backend/alembic/`). В pytest — `create_all`. `ensure_schema` подтягивает старые SQLite/Postgres.
 
 ## Диаграмма связей
 
@@ -27,8 +27,7 @@ Vehicle ── Order.vehicle_id / Vehicle.current_order_id
 | `id` | int PK | |
 | `email` | string(160), unique | логин |
 | `name` | string(160) | |
-| `password_hash` | string(128) | SHA-256 |
-| `password_plain` | string(120), nullable | служебное поле сида/сброса; **в списках API не отдаётся**, кроме одноразового `initial_password` |
+| `password_hash` | string(128) | bcrypt (старый SHA-256 переписывается на логине) |
 | `role` | string(32) | `superadmin`, `admin`, `sender`, `carrier`, `driver` (legacy `dispatcher` = админ) |
 | `company` | string(160) | |
 | `phone` | string(32) | |

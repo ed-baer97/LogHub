@@ -1,19 +1,20 @@
 # Архитектура
 
-LogHub — монорепозиторий: FastAPI + React. Один процесс API, без Celery и Redis. Движение борта — asyncio-задача на конкретный рейс.
+LogHub — монорепозиторий: FastAPI + React. Один процесс API, без очереди задач. Движение борта — asyncio-задача на конкретный рейс.
 
 ## Стек
 
 | Слой | Технологии |
 |------|------------|
 | Backend | FastAPI 0.115, SQLAlchemy 2, Pydantic 2, uvicorn |
-| БД | PostgreSQL 16 (Docker) или SQLite локально |
+| БД | PostgreSQL 16 (Docker) или SQLite локально, Alembic |
+| Кэш / шина | Redis 7 (Docker); локально без `REDIS_URL` — in-memory |
 | Frontend | React 18, Vite 6, TypeScript, MapLibre GL, react-router-dom 6 |
 | Карта | тайлы OSM, маршруты публичного OSRM (`router.project-osrm.org`) |
-| Realtime | Server-Sent Events, in-memory `EventBus` |
-| Продакшен | Docker Compose: postgres + backend + nginx |
+| Realtime | Server-Sent Events, Redis pub/sub (`EventBus`) |
+| Продакшен | Docker Compose: postgres + redis + backend + nginx |
 
-Очередей нет: симуляция едет внутри того же процесса, что и HTTP.
+Очереди Celery нет: симуляция едет внутри того же процесса, что и HTTP.
 
 ## Компоненты
 
@@ -23,22 +24,23 @@ LogHub — монорепозиторий: FastAPI + React. Один проце�
               │  SSE   → GET /api/tracking/stream
               ▼
            FastAPI
+              ├── JWT (HS256), bcrypt
               ├── auth, admin, geo, orders, fleet, tracking, analytics
               ├── access.py  — RBAC + ownership
-              ├── EventBus   — публикация fleet / order
+              ├── EventBus   — Redis pub/sub или память
               ├── OSRM + RouteCache
               └── simulator  — asyncio follow-loop на рейс
               ▼
-           SQLite или PostgreSQL
+           PostgreSQL / SQLite     Redis (опционально)
 ```
 
 ## Дерево репозитория
 
 ```
 backend/app/
-  main.py                 FastAPI, CORS, lifespan (create_all + seed)
-  config.py               DATABASE_URL, SECRET_KEY, OSRM, скорость сима
-  auth.py                 SHA-256 пароля, in-memory сессии
+  main.py                 FastAPI, CORS, lifespan (seed; create_all только в тестах)
+  config.py               DATABASE_URL, SECRET_KEY, REDIS_URL, OSRM, скорость сима
+  auth.py                 JWT, bcrypt (старый SHA-256 принимается и перехешируется)
   access.py               роли, видимость, 404 на чужие объекты
   roles.py                константы ролей, кого можно создать
   models.py               SQLAlchemy-модели
@@ -53,6 +55,7 @@ backend/app/
     simulator.py          движение по polyline
     fleet.py              борт ↔ водитель
     geo.py                haversine, проекция на линию
+backend/alembic/          миграции
 backend/tests/            матрица доступа
 frontend/src/
   pages/                  Landing, Sender, Carrier, Driver, Dispatcher
@@ -63,16 +66,18 @@ scripts/deploy-linux.sh
 
 ## Процессы при старте
 
-1. `Base.metadata.create_all` — таблицы.
-2. `ensure_schema` — лёгкие `ALTER TABLE` для старых SQLite.
-3. Если справочник пуст — сид пунктов, супер-админ, кэш маршрутов по ключевым парам (Актау–Жанаозен и др.).
-4. `price_model.fit` — линейная регрессия по `historical_trips` или запасные коэффициенты.
-
-Переменная `TESTING=1` отключает сид (фикстуры pytest сами кладут данные).
+1. Вне тестов схема накатывается Alembic (`alembic upgrade head` в Docker CMD и локально).
+2. Pytest: `TESTING=1` → `create_all` на временный SQLite, сид не гоняется.
+3. `ensure_schema` — лёгкие `ALTER` для старых БД (в том числе сброс `password_plain`).
+4. Если справочник пуст — сид пунктов, супер-админ, кэш маршрутов по ключевым парам (Актау–Жанаозен и др.).
+5. `price_model.fit` — линейная регрессия по `historical_trips` или запасные коэффициенты.
+6. Если задан `REDIS_URL` — слушатель pub/sub для SSE.
 
 ## Realtime
 
 `GET /api/tracking/stream` — SSE. Токен: заголовок `Authorization: Bearer …` или query `?token=`.
+
+При `REDIS_URL` публикация идёт в канал `loghub:events`; каждый процесс API раздаёт локальным подписчикам. Без Redis (pytest, локальный uvicorn) — очередь в памяти процесса.
 
 События:
 
@@ -105,16 +110,18 @@ scripts/deploy-linux.sh
 - Если водитель шлёт GPS (`POST /api/tracking/ping`), `live_until` держится 45 с и симулятор не двигает борт.
 - По концу polyline заявка становится `delivered`, борт — `idle` (то же делает «Завершить рейс»).
 
-GPS с телефона необязателен.
+GPS с телефона необязателен. Follow-loop живёт в том процессе API, где нажали «Выехать» — несколько воркеров пока не включают.
 
 ## Аутентификация
 
-Не JWT. `secrets.token_urlsafe(24)` кладётся в словарь `SESSIONS` в памяти. Пароль: SHA-256 от `{SECRET_KEY}:{password}`.
-
-Следствия: рестарт API сбрасывает всех; несколько инстансов uvicorn не шарят сессии.
+JWT HS256, `sub` = id пользователя, срок `JWT_EXPIRE_HOURS` (по умолчанию 7 суток). Пароль: bcrypt. Старые SHA-256 хеши (`SECRET_KEY:password`) принимаются и при логине переписываются в bcrypt.
 
 Фронт хранит токен и пользователя в `localStorage` (`caspian_token`, `caspian_user`).
 
+Одноразовый пароль при создании/сбросе уходит в поле ответа `initial_password`, в БД не хранится.
+
 ## Границы MVP
 
-Нет: платежи, ЭЦП / SMS, нативное приложение, скоринг перевозчиков, тахографы, Celery/Redis, горизонтальное масштабирование API.
+Нет: платежи, ЭЦП / SMS, нативное приложение, скоринг перевозчиков, тахографы, Celery, горизонтальное масштабирование API (симулятор в процессе).
+
+Очередь работ: [масштабирование бэкенда](scaling.md). Этап 1 (Redis, JWT, Alembic) уже в коде.

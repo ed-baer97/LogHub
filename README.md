@@ -57,10 +57,10 @@ open / taken / assigned → cancelled
 
 ## Стек
 
-- Backend: FastAPI, SQLAlchemy 2, PostgreSQL (Docker) или SQLite локально, SSE
+- Backend: FastAPI, SQLAlchemy 2, Alembic, PostgreSQL (Docker) или SQLite локально, JWT, SSE
 - Frontend: React 18, Vite, MapLibre GL
 - Маршруты: публичный OSRM, кэш в БД
-- Очередей Celery / Redis нет: один процесс uvicorn, движение — задача на конкретный рейс
+- Redis в Docker — pub/sub для SSE. Движение борта — задача в процессе API. Дальше: [docs/scaling.md](docs/scaling.md)
 
 ## Локальный запуск
 
@@ -72,6 +72,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux:   source .venv/bin/activate
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -85,7 +86,7 @@ npm run dev
 
 Открыть **http://localhost:5173** — Vite проксирует `/api` на бэкенд. API: http://127.0.0.1:8000/docs
 
-Первый старт: таблицы, пункты Мангистау, супер-админ. После перезапуска uvicorn сессии сбрасываются — войдите снова.
+Первый старт: `alembic upgrade head`, затем пункты Мангистау и супер-админ. JWT переживает перезапуск uvicorn (пока не истечёт).
 
 ```bash
 cd backend
@@ -125,7 +126,7 @@ cloudflared tunnel --url http://localhost:80
 
 ## Что за рамками хакатона
 
-Платежи, ЭЦП / SMS, нативное приложение, скоринг перевозчиков, тахографы, Celery/Redis, несколько инстансов API.
+Платежи, ЭЦП / SMS, нативное приложение, скоринг перевозчиков, тахографы, Celery, несколько инстансов API.
 
 ## Структура
 

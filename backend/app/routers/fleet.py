@@ -71,7 +71,6 @@ def create_bort(body: BortCreate, db: DbDep, user: CarrierDep):
         company=user.company,
         phone=body.driver_phone,
         password_hash=hash_password(body.driver_password),
-        password_plain=body.driver_password,
         carrier_id=user.id,
         is_active=True,
     )
@@ -135,7 +134,6 @@ def update_bort(vehicle_id: int, body: BortUpdate, db: DbDep, user: CarrierDep):
         driver = db.get(User, v.driver_id)
         if driver:
             driver.password_hash = hash_password(body.driver_password)
-            driver.password_plain = body.driver_password
             initial = body.driver_password
     if body.driver_active is not None and v.driver_id:
         if body.driver_active is False and v.current_order_id:

@@ -68,7 +68,6 @@ def create_user(body: UserCreate, db: DbDep, actor: StaffDep):
         company=body.company,
         phone=body.phone,
         password_hash=hash_password(body.password),
-        password_plain=body.password,
         is_active=True,
     )
     db.add(user)
@@ -141,7 +140,6 @@ def reset_password(user_id: int, db: DbDep, actor: AdminUsersDep, body: Password
     _manageable(actor, user)
     password = (body.password.strip() if body and body.password else "") or _temp_password()
     user.password_hash = hash_password(password)
-    user.password_plain = password
     db.commit()
     db.refresh(user)
     return _to_out(user, password)

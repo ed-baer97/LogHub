@@ -13,7 +13,6 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(160))
     password_hash: Mapped[str] = mapped_column(String(128))
-    password_plain: Mapped[str | None] = mapped_column(String(120), nullable=True)
     role: Mapped[str] = mapped_column(String(32), index=True)
     company: Mapped[str | None] = mapped_column(String(160), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)

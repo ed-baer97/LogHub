@@ -8,11 +8,14 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.routers import admin, analytics, auth, fleet, geo, orders, tracking
 from app.seed import seed_if_empty
+from app.services.events import bus
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    if os.getenv("TESTING"):
+        Base.metadata.create_all(bind=engine)
+    await bus.start()
     if not os.getenv("TESTING"):
         db = SessionLocal()
         try:
@@ -20,6 +23,7 @@ async def lifespan(_: FastAPI):
         finally:
             db.close()
     yield
+    await bus.stop()
 
 
 app = FastAPI(title="Caspian LogHub", version="1.0.0", lifespan=lifespan)
