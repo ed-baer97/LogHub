@@ -1,0 +1,1043 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Caspian LogHub — питч</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23178f87'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b100e;
+      --bg-2: #121a16;
+      --panel: rgba(16, 26, 22, 0.88);
+      --ink: #eef3ea;
+      --muted: #8b9a90;
+      --sea: #2ec4b6;
+      --sea-2: #147f78;
+      --dust: #e0a45a;
+      --coral: #e07a5f;
+      --line: rgba(232, 239, 230, 0.08);
+      --radius: 18px;
+      --font: "Manrope", system-ui, sans-serif;
+      --serif: "Fraunces", Georgia, serif;
+      --btn-fg: #06221f;
+      --slide-w: 1600px;
+      --slide-h: 900px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: #060908; color: var(--ink); font-family: var(--font); }
+    body { overflow: hidden; }
+
+    .stage {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(1200px 700px at 12% 0%, rgba(46, 196, 182, 0.08), transparent 55%),
+        radial-gradient(900px 600px at 100% 100%, rgba(224, 164, 90, 0.06), transparent 50%),
+        #060908;
+    }
+    .frame {
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+      position: relative;
+      overflow: hidden;
+      background: var(--bg);
+    }
+    .pitch-map {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .pitch-map .maplibregl-map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .pitch-map .maplibregl-ctrl-attrib {
+      font-size: 9px;
+      opacity: 0.45;
+    }
+    .pitch-veil {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, rgba(11,16,14,0.72) 0%, rgba(11,16,14,0.18) 46%, rgba(11,16,14,0.08) 100%),
+        linear-gradient(180deg, rgba(11,16,14,0.22) 0%, transparent 36%, rgba(11,16,14,0.28) 100%);
+    }
+    .place-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: #cfe7d8;
+      box-shadow: 0 0 0 4px rgba(207,231,216,0.15);
+    }
+    .place-dot.city { width: 11px; height: 11px; background: var(--sea); }
+    .slide {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: none;
+      flex-direction: column;
+      padding: clamp(28px, 4.2vh, 48px) clamp(36px, 4.5vw, 64px) 72px;
+      background: linear-gradient(90deg, rgba(11,16,14,0.52) 0%, rgba(11,16,14,0.22) 52%, rgba(11,16,14,0.1) 100%);
+      border-radius: 0;
+      overflow: hidden;
+    }
+    .slide.on { display: flex; }
+    .slide.title-slide,
+    .slide.closing-slide,
+    .slide.map-slide,
+    .slide.stand-slide {
+      background: transparent;
+    }
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(180deg, rgba(11,16,14,0.12) 0%, transparent 28%, rgba(11,16,14,0.35) 100%);
+    }
+    .slide > * { position: relative; z-index: 1; }
+
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; letter-spacing: -0.02em; }
+    .brand svg { width: 32px; height: 32px; flex: none; }
+    .kicker {
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--sea);
+      margin: 0 0 12px;
+    }
+    h1.display {
+      font-family: var(--serif);
+      font-weight: 500;
+      font-size: clamp(36px, 4.6vw, 64px);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin: 0 0 14px;
+    }
+    .lede { color: var(--muted); font-size: clamp(16px, 1.5vw, 20px); line-height: 1.5; margin: 0; max-width: 42rem; }
+    .grow { flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin: 28px 0 22px;
+    }
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+    .stat b {
+      display: block;
+      font-family: var(--serif);
+      font-size: clamp(28px, 3vw, 40px);
+      font-weight: 500;
+      letter-spacing: -0.03em;
+    }
+    .stat span { color: var(--muted); font-size: 13px; }
+
+    .cols { display: grid; gap: 14px; }
+    .cols.three { grid-template-columns: repeat(3, 1fr); }
+    .cols.two { grid-template-columns: 1.1fr 0.9fr; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 20px 22px;
+    }
+    .card h3 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sea); }
+    .card ul { margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 15px; line-height: 1.55; }
+    .card .lede { margin: 0; color: var(--ink); font-size: 20px; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+    .chip {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.03);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .chip.sea { color: var(--btn-fg); background: var(--sea); border-color: transparent; }
+    .chip.dust { color: #2a1a06; background: var(--dust); border-color: transparent; }
+
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .flow span {
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .flow i { color: var(--sea); font-style: normal; font-weight: 800; }
+
+    .pipe {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0 22px;
+    }
+    .pipe b {
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 15px;
+    }
+    .pipe b.now { background: var(--sea); color: var(--btn-fg); border-color: transparent; }
+    .pipe em { color: var(--muted); font-style: normal; }
+
+    .stand-slide .top { margin-bottom: 14px; }
+    .mvp-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #3dcc7a;
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+      border: 1px solid rgba(61, 204, 122, 0.32);
+      background: rgba(61, 204, 122, 0.12);
+      border-radius: 999px;
+      padding: 6px 12px;
+    }
+    .mvp-live i {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #3dcc7a;
+      box-shadow: 0 0 10px #3dcc7a;
+    }
+    .mvp-panel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px 20px 14px;
+      border-radius: 24px;
+      background: rgba(16, 26, 22, 0.58);
+      border: 1px solid rgba(232, 239, 230, 0.12);
+      backdrop-filter: blur(18px);
+    }
+    .stand-slide h1.display {
+      font-size: clamp(26px, 3vw, 40px);
+      max-width: none;
+      margin: 0;
+    }
+    .mvp-orch { position: relative; }
+    .mvp-docker {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--sea);
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .mvp-docker svg { width: 28px; height: 22px; }
+    .mvp-rail {
+      height: 2px;
+      margin: 0 3%;
+      background: linear-gradient(90deg, transparent, rgba(46, 196, 182, 0.55), transparent);
+    }
+    .mvp-tiles {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 4px;
+    }
+    .mvp-tile {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 16px 2px 8px;
+      text-align: center;
+    }
+    .mvp-tile::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 1px;
+      height: 14px;
+      background: rgba(46, 196, 182, 0.4);
+      transform: translateX(-50%);
+    }
+    .mvp-ico {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      color: var(--sea);
+    }
+    .mvp-ico svg { width: 28px; height: 28px; }
+    .mvp-tile b { font-size: 12px; font-weight: 600; letter-spacing: -0.02em; }
+    .mvp-logic {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .mvp-logic article,
+    .mvp-cabs article {
+      background: rgba(11, 16, 14, 0.45);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 14px;
+    }
+    .mvp-logic b, .mvp-cabs b { display: block; font-size: 14px; }
+    .mvp-logic span, .mvp-cabs span { color: var(--muted); font-size: 12px; }
+    .mvp-cabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .mvp-ready {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .mvp-demo {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .mvp-demo span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .mvp-demo svg { width: 14px; height: 14px; color: var(--sea); }
+
+    .domain {
+      font-family: var(--serif);
+      font-size: clamp(28px, 3.4vw, 44px);
+      letter-spacing: -0.03em;
+      margin: 0 0 18px;
+    }
+    .domain a { color: var(--sea); text-decoration: none; }
+    .warn { color: var(--dust); font-weight: 600; margin: 14px 0 0; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--sea);
+      color: var(--btn-fg);
+      font-weight: 800;
+      text-decoration: none;
+      padding: 12px 18px;
+      border-radius: 12px;
+      width: max-content;
+    }
+
+    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 22px; }
+    .steps.three { grid-template-columns: repeat(3, 1fr); }
+    .cols.four { grid-template-columns: repeat(4, 1fr); }
+    .step { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; background: var(--panel); }
+    .step small { color: var(--sea); letter-spacing: 0.14em; text-transform: uppercase; font-size: 11px; font-weight: 700; }
+    .step p { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .step strong { color: var(--ink); display: block; margin-top: 6px; }
+
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .metrics.three { grid-template-columns: repeat(3, 1fr); }
+    .metric { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+    .metric b { display: block; font-family: var(--serif); font-size: 28px; font-weight: 500; margin-top: 6px; }
+    .metric span { color: var(--muted); font-size: 13px; }
+    .callout {
+      margin-top: 18px;
+      padding: 18px 20px;
+      border-radius: var(--radius);
+      background: rgba(46, 196, 182, 0.1);
+      border: 1px solid rgba(46, 196, 182, 0.22);
+      font-size: 18px;
+    }
+
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .ok h3 { color: var(--sea); }
+    .no h3 { color: var(--coral); }
+    .split ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.55; }
+
+    .bar {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px clamp(36px, 4.5vw, 64px) 18px;
+      color: var(--muted);
+      font-size: 13px;
+      background: linear-gradient(180deg, transparent, rgba(11,16,14,0.85));
+    }
+    .dots { display: flex; gap: 7px; }
+    .dots button {
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 0; padding: 0; background: rgba(238,243,234,0.18); cursor: pointer;
+    }
+    .dots button.on { background: var(--sea); width: 18px; border-radius: 99px; }
+    .nav { display: flex; gap: 8px; }
+    .nav button, .hint {
+      background: transparent; color: var(--muted); border: 1px solid var(--line);
+      border-radius: 10px; padding: 6px 10px; cursor: pointer; font: inherit;
+    }
+
+    .center { text-align: left; }
+    .title-slide .grow,
+    .closing-slide .grow { justify-content: flex-end; padding-bottom: 12px; }
+    .title-slide h1.display,
+    .closing-slide h1.display,
+    .map-slide h1.display {
+      max-width: 18ch;
+      text-shadow: 0 2px 28px rgba(11, 16, 14, 0.65);
+    }
+
+    @media print {
+      @page { size: landscape; margin: 0; }
+      body { overflow: visible; background: var(--bg); }
+      .stage { display: block; background: none; height: auto; }
+      .frame { width: 100%; height: auto; }
+      .slide {
+        display: flex !important;
+        position: relative;
+        page-break-after: always;
+        break-after: page;
+        height: 100vh;
+        background: var(--bg) !important;
+      }
+      .pitch-map, .pitch-veil { display: none !important; }
+      .nav, .hint { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <defs>
+      <linearGradient id="lh-bg" x1="18" y1="0" x2="46" y2="64" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#3ad4c5"/>
+        <stop offset=".46" stop-color="#178f87"/>
+        <stop offset="1" stop-color="#0a4541"/>
+      </linearGradient>
+    </defs>
+  </svg>
+  <div class="stage">
+    <div class="frame" id="frame">
+      <div class="pitch-map" id="pitch-map"></div>
+      <div class="pitch-veil" aria-hidden="true"></div>
+
+      <section class="slide title-slide on" data-i="0">
+        <div class="top">
+          <div class="brand">
+            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <rect width="64" height="64" rx="16" fill="url(#lh-bg)"/>
+              <rect x="1.15" y="1.15" width="61.7" height="61.7" rx="14.9" stroke="#fff" stroke-opacity=".16"/>
+              <path d="M16.4 47.9C19.8 37.4 24 38.6 32 32S44.2 26.6 47.6 16.1" stroke="#f4fffd" stroke-width="3.4" stroke-linecap="round"/>
+              <circle cx="32" cy="32" r="8.15" fill="url(#lh-bg)"/>
+              <circle cx="32" cy="32" r="6.45" stroke="#f4fffd" stroke-width="2.6"/>
+              <circle cx="32" cy="32" r="2.45" fill="#f4fffd"/>
+              <circle cx="16.4" cy="47.9" r="3.35" fill="#f4fffd"/>
+              <circle cx="47.6" cy="16.1" r="3.35" fill="#f4fffd"/>
+            </svg>
+            Caspian LogHub
+          </div>
+          <p class="kicker" style="margin:0">01 · Название проекта</p>
+        </div>
+        <div class="grow">
+          <p class="kicker">Мангистау</p>
+          <h1 class="display">Caspian LogHub</h1>
+          <p class="lede">Биржа грузоперевозок внутри области. Не порт и не транзит.</p>
+          <p class="domain" style="margin-top:28px"><a href="https://caspianloghub.asia/">caspianloghub.asia</a></p>
+        </div>
+      </section>
+
+      <section class="slide title-slide" data-i="1">
+        <div class="top">
+          <div class="brand">
+            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <rect width="64" height="64" rx="16" fill="url(#lh-bg)"/>
+              <rect x="1.15" y="1.15" width="61.7" height="61.7" rx="14.9" stroke="#fff" stroke-opacity=".16"/>
+              <path d="M16.4 47.9C19.8 37.4 24 38.6 32 32S44.2 26.6 47.6 16.1" stroke="#f4fffd" stroke-width="3.4" stroke-linecap="round"/>
+              <circle cx="32" cy="32" r="8.15" fill="url(#lh-bg)"/>
+              <circle cx="32" cy="32" r="6.45" stroke="#f4fffd" stroke-width="2.6"/>
+              <circle cx="32" cy="32" r="2.45" fill="#f4fffd"/>
+              <circle cx="16.4" cy="47.9" r="3.35" fill="#f4fffd"/>
+              <circle cx="47.6" cy="16.1" r="3.35" fill="#f4fffd"/>
+            </svg>
+            Caspian LogHub
+          </div>
+          <p class="kicker" style="margin:0">02 · Название команды</p>
+        </div>
+        <div class="grow">
+          <p class="kicker">Mangystau Hackathon</p>
+          <h1 class="display">IT lyceum</h1>
+          <p class="lede">Продукт — Caspian LogHub. Биржа, карта, обратная загрузка — один стенд.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-i="2">
+        <p class="kicker">03 · Проблема</p>
+        <h1 class="display">Звонки вместо биржи, рейсы вслепую, возврат пустым.</h1>
+        <div class="cols three" style="margin-top:24px">
+          <article class="card">
+            <h3>Нет биржи перевозок</h3>
+            <ul><li>Груз ищут звонками и в мессенджерах. Перевозчики простаивают без загрузки.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Нет отслеживания</h3>
+            <ul><li>Заказчик не знает, где груз и когда он приедет.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Маршруты без оптимизации</h3>
+            <ul><li>Между посёлками, промзонами и стройками едут без просчёта пути.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Порожний пробег</h3>
+            <ul><li>Машины возвращаются пустыми — лишние расходы и износ техники.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Нет данных для планирования</h3>
+            <ul><li>Акимат не видит картину перевозок для планирования дорог и инфраструктуры.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Особые условия</h3>
+            <ul><li>Жара, пыльные бури, большие расстояния. Скоропортящиеся грузы и стройматериалы.</li></ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="slide" data-i="3">
+        <p class="kicker">04 · Цель</p>
+        <h1 class="display">Собрать рейс туда и груз домой на одном плече.</h1>
+        <div class="cols three" style="margin-top:28px">
+          <article class="card">
+            <h3>Отправитель</h3>
+            <p class="lede">Находит борт без обзвона.</p>
+          </article>
+          <article class="card">
+            <h3>Перевозчик</h3>
+            <p class="lede">Не возвращается пустым, если груз в коридоре.</p>
+          </article>
+          <article class="card">
+            <h3>Акимат</h3>
+            <p class="lede">Видит, какие плечи живые.</p>
+          </article>
+        </div>
+        <div class="metrics" style="margin-top:18px; grid-template-columns: repeat(2, 1fr)">
+          <div class="metric"><span>Пустой возврат Актау–Жанаозен</span><b>48 л</b></div>
+          <div class="metric"><span>Дизель 32 л / 100 км</span><b>14 000 ₸</b></div>
+        </div>
+      </section>
+
+      <section class="slide map-slide" data-i="4">
+        <p class="kicker">05 · Решение</p>
+        <h1 class="display">Мы создали биржу грузоперевозок.</h1>
+        <p class="lede" style="margin-top:6px">Отправитель выкладывает заказ — перевозчик перехватывает и распределяет внутри своего парка.</p>
+        <div class="steps" style="margin-top:22px; grid-template-columns: repeat(5, 1fr)">
+          <div class="step">
+            <small>01 · Супер-админ</small>
+            <strong>Надзорный контур</strong>
+            <p>Видит всю область: заявки, парк, аналитику. Создаёт админов.</p>
+          </div>
+          <div class="step">
+            <small>02 · Админ</small>
+            <strong>Допуск участников</strong>
+            <p>Регистрирует отправителей и перевозчиков. Случайных людей на бирже нет.</p>
+          </div>
+          <div class="step">
+            <small>03 · Отправитель</small>
+            <strong>Заказ на бирже</strong>
+            <p>Организации нужно доставить груз из пункта А в пункт Б. Выкладывает заказ, цена сразу.</p>
+          </div>
+          <div class="step">
+            <small>04 · Перевозчик</small>
+            <strong>Перехватывает заказ</strong>
+            <p>Кто взял первым — того и рейс. Остальным заявка больше не видна.</p>
+          </div>
+          <div class="step">
+            <small>05 · Парк</small>
+            <strong>Распределение рейса</strong>
+            <p>Перевозчик назначает борт: машина и водитель. Рейс виден на карте.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-i="5">
+        <p class="kicker">06 · Аудитория</p>
+        <h1 class="display">Три стороны одного рейса. Плюс акимат смотрит потоки.</h1>
+        <div class="cols four" style="margin-top:28px">
+          <article class="card">
+            <h3>Отправитель</h3>
+            <ul><li>Магазин, стройка, ферма, посёлок. Груз внутри области.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Перевозчик</h3>
+            <ul><li>Парк с базой в Мангистау. Ищет загрузку на обратном плече.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Водитель</h3>
+            <ul><li>Ведёт назначенный рейс. Не собирает маршрут по звонкам.</li></ul>
+          </article>
+          <article class="card">
+            <h3>Акимат</h3>
+            <ul><li>Дашборд живых коридоров. Не формальный перечень техники.</li></ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="slide" data-i="6">
+        <p class="kicker">07 · Функции</p>
+        <h1 class="display">Полный цикл рейса — от заявки до аналитики.</h1>
+        <div class="steps three" style="margin-top:24px">
+          <div class="step">
+            <small>01 · Биржа</small>
+            <strong>Заявка и отклик</strong>
+            <p>Отправитель размещает заявку, перевозчик берёт её и назначает борт.</p>
+          </div>
+          <div class="step">
+            <small>02 · Цена</small>
+            <strong>Котировка при создании</strong>
+            <p>Километры по дорогам, вес, тип груза. Отправитель может указать свою цену.</p>
+          </div>
+          <div class="step">
+            <small>03 · Рейс</small>
+            <strong>Этапы без пропусков</strong>
+            <p>Прибыл → погрузка → выехал → доставлено. Пропустить этап нельзя.</p>
+          </div>
+          <div class="step">
+            <small>04 · Карта</small>
+            <strong>Движение в реальном времени</strong>
+            <p>Маршрут по дорогам области. После «Выехать» машина видна заказчику.</p>
+          </div>
+          <div class="step">
+            <small>05 · Обратная загрузка</small>
+            <strong>Подбор в коридоре 55 км</strong>
+            <p>Отклонение до 90 км. Система записывает сэкономленные километры.</p>
+          </div>
+          <div class="step">
+            <small>06 · Дашборд</small>
+            <strong>Порожний пробег в литрах и тенге</strong>
+            <p>Живые коридоры области — экран для акимата.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide stand-slide map-slide" data-i="7">
+        <div class="top">
+          <p class="kicker" style="margin:0">08 · Технологии</p>
+          <a class="mvp-live" href="https://caspianloghub.asia/" target="_blank" rel="noreferrer">
+            <i aria-hidden="true"></i> Status: Online
+          </a>
+        </div>
+        <div class="mvp-panel">
+          <h1 class="display">Docker Compose на живом стенде.</h1>
+          <div class="mvp-orch">
+            <div class="mvp-docker">
+              <svg viewBox="0 0 32 24" fill="none" aria-hidden="true">
+                <rect x="3" y="12" width="8" height="8" rx="1.4" stroke="currentColor" stroke-width="1.6"/>
+                <rect x="12" y="12" width="8" height="8" rx="1.4" stroke="currentColor" stroke-width="1.6"/>
+                <rect x="21" y="12" width="8" height="8" rx="1.4" stroke="currentColor" stroke-width="1.6"/>
+                <rect x="7.5" y="3" width="8" height="8" rx="1.4" stroke="currentColor" stroke-width="1.6"/>
+                <rect x="16.5" y="3" width="8" height="8" rx="1.4" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+              Docker Compose
+            </div>
+            <div class="mvp-rail" aria-hidden="true"></div>
+            <div class="mvp-tiles">
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><rect x="5" y="7" width="22" height="16" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M10 27h12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <b>React</b>
+              </div>
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><rect x="6" y="10" width="20" height="12" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M10 14h8M10 18h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <b>nginx</b>
+              </div>
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M7 16h18M16 7v18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <b>FastAPI</b>
+              </div>
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><rect x="6" y="8" width="12" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="14" y="8" width="12" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/></svg></span>
+                <b>API-2</b>
+              </div>
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M16 11v5l3 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <b>ARQ</b>
+              </div>
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><ellipse cx="16" cy="9" rx="9" ry="4" stroke="currentColor" stroke-width="1.7"/><path d="M7 9v14c0 2.2 4 4 9 4s9-1.8 9-4V9" stroke="currentColor" stroke-width="1.7"/></svg></span>
+                <b>Postgres</b>
+              </div>
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><rect x="7" y="8" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M12 13h8M12 19h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <b>Redis</b>
+              </div>
+              <div class="mvp-tile">
+                <span class="mvp-ico"><svg viewBox="0 0 32 32" fill="none"><path d="M16 5l8 21H8L16 5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="16" cy="22" r="2.2" fill="currentColor"/></svg></span>
+                <b>OSRM</b>
+              </div>
+            </div>
+          </div>
+          <div class="mvp-logic">
+            <article>
+              <b>Карта</b>
+              <span>MapLibre · OSM · Carto</span>
+            </article>
+            <article>
+              <b>Вход</b>
+              <span>Cloudflare · caspianloghub.asia</span>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide stand-slide" data-i="8">
+        <div class="top">
+          <p class="kicker" style="margin:0">09 · MVP</p>
+          <a class="mvp-live" href="https://caspianloghub.asia/" target="_blank" rel="noreferrer">
+            <i aria-hidden="true"></i> Status: Online
+          </a>
+        </div>
+        <h1 class="display">Рейс можно провести сегодня. Оплату не подключали.</h1>
+        <div class="split" style="margin-top:22px">
+          <article class="card ok">
+            <h3>Продукт</h3>
+            <ul>
+              <li>Биржа, живая карта, обратная загрузка, дашборд порожнего пробега</li>
+              <li>Четыре кабинета: отправитель, перевозчик, водитель, диспетчер</li>
+            </ul>
+          </article>
+          <article class="card ok">
+            <h3>Стенд</h3>
+            <ul>
+              <li>caspianloghub.asia — живой сервер, не макет</li>
+              <li>Сценарий: Промзона Актау → Жанаозен, возврат с грузом из Тенге</li>
+            </ul>
+          </article>
+        </div>
+        <p class="mvp-ready">Готовы показать вживую</p>
+        <div class="mvp-demo">
+          <span>Карта</span>
+          <span>Заявка</span>
+          <span>Обратный груз</span>
+          <span>Дашборд</span>
+        </div>
+        <p class="lede" style="margin-top:16px"><a href="https://caspianloghub.asia/" style="color:var(--sea)">caspianloghub.asia</a></p>
+      </section>
+
+      <section class="slide closing-slide" data-i="9">
+        <div class="top">
+          <div class="brand">
+            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <rect width="64" height="64" rx="16" fill="url(#lh-bg)"/>
+              <rect x="1.15" y="1.15" width="61.7" height="61.7" rx="14.9" stroke="#fff" stroke-opacity=".16"/>
+              <path d="M16.4 47.9C19.8 37.4 24 38.6 32 32S44.2 26.6 47.6 16.1" stroke="#f4fffd" stroke-width="3.4" stroke-linecap="round"/>
+              <circle cx="32" cy="32" r="8.15" fill="url(#lh-bg)"/>
+              <circle cx="32" cy="32" r="6.45" stroke="#f4fffd" stroke-width="2.6"/>
+              <circle cx="32" cy="32" r="2.45" fill="#f4fffd"/>
+              <circle cx="16.4" cy="47.9" r="3.35" fill="#f4fffd"/>
+              <circle cx="47.6" cy="16.1" r="3.35" fill="#f4fffd"/>
+            </svg>
+            Caspian LogHub
+          </div>
+          <p class="kicker" style="margin:0">10 · Перспективы</p>
+        </div>
+        <div class="grow">
+          <h1 class="display">Пилот на Актау–Жанаозен. Дальше — живые перевозчики области.</h1>
+          <div class="cols" style="margin-top:24px; grid-template-columns: repeat(2, 1fr)">
+            <article class="card">
+              <h3>Пилот</h3>
+              <p class="lede">Коридор Актау–Жанаозен: реальные заявки, дашборд акимату.</p>
+            </article>
+            <article class="card">
+              <h3>Развитие продукта</h3>
+              <p class="lede">Оплата в системе, мобильное приложение, погода на маршруте.</p>
+            </article>
+          </div>
+          <p class="domain" style="margin-top:28px"><a href="https://caspianloghub.asia/">caspianloghub.asia</a></p>
+        </div>
+      </section>
+
+      <div class="bar">
+        <div class="dots" id="dots"></div>
+        <span id="label">1 / 10</span>
+        <div class="nav">
+          <span class="hint">← → · F полный экран</span>
+          <button type="button" id="prev" aria-label="Назад">←</button>
+          <button type="button" id="next" aria-label="Вперёд">→</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    const dots = document.getElementById("dots");
+    const label = document.getElementById("label");
+    let i = Math.max(0, parseInt(location.hash.slice(1), 10) || 0);
+    if (i >= slides.length) i = 0;
+    let resizeMap = () => {};
+
+    slides.forEach((_, n) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.addEventListener("click", () => go(n));
+      dots.appendChild(b);
+    });
+
+    function go(n) {
+      i = (n + slides.length) % slides.length;
+      slides.forEach((s, k) => s.classList.toggle("on", k === i));
+      [...dots.children].forEach((d, k) => d.classList.toggle("on", k === i));
+      label.textContent = (i + 1) + " / " + slides.length;
+      history.replaceState(null, "", "#" + i);
+      requestAnimationFrame(resizeMap);
+    }
+
+    document.getElementById("prev").onclick = () => go(i - 1);
+    document.getElementById("next").onclick = () => go(i + 1);
+
+    addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") { e.preventDefault(); go(i + 1); }
+      if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); go(i - 1); }
+      if (e.key === "Home") go(0);
+      if (e.key === "End") go(slides.length - 1);
+      if (e.key === "f" || e.key === "F") {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+        else document.exitFullscreen();
+      }
+    });
+
+    go(i);
+
+    (function mapBg() {
+      const root = document.getElementById("pitch-map");
+      if (!root || typeof maplibregl === "undefined") return;
+
+      const PLACES = [
+        { name: "Актау", kind: "city", lat: 43.6588, lon: 51.1975 },
+        { name: "Жанаозен", kind: "city", lat: 43.3412, lon: 52.8619 },
+        { name: "Форт-Шевченко", kind: "city", lat: 44.5089, lon: 50.2636 },
+        { name: "Бейнеу", kind: "village", lat: 45.3242, lon: 55.1961 },
+        { name: "Шетпе", kind: "village", lat: 44.1444, lon: 52.1722 },
+        { name: "Курык", kind: "village", lat: 43.18, lon: 51.65 },
+      ];
+      const WAYS = [
+        ["Актау", "Жанаозен"],
+        ["Актау", "Шетпе"],
+        ["Шетпе", "Бейнеу"],
+        ["Актау", "Форт-Шевченко"],
+        ["Актау", "Курык"],
+        ["Жанаозен", "Шетпе"],
+      ];
+      const byName = (n) => PLACES.find((p) => p.name === n);
+      const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      function along(coords, t) {
+        if (!coords || coords.length < 2) return [51.2, 43.65];
+        const x = ((t % 1) + 1) % 1;
+        let total = 0;
+        const segs = [];
+        for (let i = 0; i < coords.length - 1; i++) {
+          const d = Math.hypot(coords[i + 1][0] - coords[i][0], coords[i + 1][1] - coords[i][1]);
+          segs.push(d);
+          total += d;
+        }
+        if (total <= 0) return coords[0];
+        let remain = x * total;
+        for (let i = 0; i < segs.length; i++) {
+          if (remain <= segs[i]) {
+            const local = segs[i] === 0 ? 0 : remain / segs[i];
+            return lerp(coords[i], coords[i + 1], local);
+          }
+          remain -= segs[i];
+        }
+        return coords[coords.length - 1];
+      }
+      function straight(a, b) {
+        const coords = [];
+        for (let n = 0; n <= 32; n++) {
+          const t = n / 32;
+          coords.push([a.lon + (b.lon - a.lon) * t, a.lat + (b.lat - a.lat) * t]);
+        }
+        return coords;
+      }
+
+      const map = new maplibregl.Map({
+        container: root,
+        style: {
+          version: 8,
+          sources: {
+            osm: {
+              type: "raster",
+              tiles: ["https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"],
+              tileSize: 256,
+              attribution: "© OpenStreetMap © CARTO",
+            },
+          },
+          layers: [{ id: "osm", type: "raster", source: "osm" }],
+        },
+        center: [51.1975, 43.6588],
+        zoom: 8,
+        minZoom: 6.1,
+        maxZoom: 8.4,
+        maxBounds: [[49.9, 42.3], [56.4, 46.2]],
+        interactive: false,
+        attributionControl: { compact: true },
+      });
+
+      let corridors = [];
+      function setRoutes() {
+        const src = map.getSource("routes");
+        if (!src) return;
+        src.setData({
+          type: "FeatureCollection",
+          features: corridors.map((c) => ({
+            type: "Feature",
+            properties: { id: c.id },
+            geometry: { type: "LineString", coordinates: c.coords },
+          })),
+        });
+      }
+      function setDots(tick) {
+        const src = map.getSource("network");
+        if (!src) return;
+        const features = [];
+        corridors.forEach((c, idx) => {
+          const t = (tick / (200 + idx * 28) + idx * 0.18) % 1;
+          features.push({
+            type: "Feature",
+            properties: { tone: "transit" },
+            geometry: { type: "Point", coordinates: along(c.coords, t) },
+          });
+        });
+        const aktau = byName("Актау");
+        const zhana = byName("Жанаозен");
+        const shetpe = byName("Шетпе");
+        const beineu = byName("Бейнеу");
+        if (aktau) {
+          features.push({ type: "Feature", properties: { tone: "idle" }, geometry: { type: "Point", coordinates: [aktau.lon - 0.07, aktau.lat + 0.05] } });
+          features.push({ type: "Feature", properties: { tone: "load" }, geometry: { type: "Point", coordinates: [aktau.lon + 0.05, aktau.lat - 0.03] } });
+        }
+        if (zhana) features.push({ type: "Feature", properties: { tone: "order" }, geometry: { type: "Point", coordinates: [zhana.lon - 0.04, zhana.lat + 0.04] } });
+        if (shetpe) features.push({ type: "Feature", properties: { tone: "idle" }, geometry: { type: "Point", coordinates: [shetpe.lon + 0.06, shetpe.lat + 0.02] } });
+        if (beineu) features.push({ type: "Feature", properties: { tone: "order" }, geometry: { type: "Point", coordinates: [beineu.lon - 0.05, beineu.lat - 0.03] } });
+        src.setData({ type: "FeatureCollection", features });
+      }
+
+      const toneColor = [
+        "match", ["get", "tone"],
+        "idle", "#3dcc7a",
+        "order", "#6ec8ff",
+        "load", "#e0a45a",
+        "transit", "#a78bfa",
+        "#2ec4b6",
+      ];
+
+      map.on("load", () => {
+        map.addSource("routes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        map.addLayer({
+          id: "routes-line",
+          type: "line",
+          source: "routes",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": "#2ec4b6", "line-width": 2.2, "line-opacity": 0.78 },
+        });
+        map.addSource("network", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        map.addLayer({
+          id: "network-glow",
+          type: "circle",
+          source: "network",
+          paint: { "circle-radius": 11, "circle-blur": 0.8, "circle-opacity": 0.28, "circle-color": toneColor },
+        });
+        map.addLayer({
+          id: "network-dots",
+          type: "circle",
+          source: "network",
+          paint: {
+            "circle-radius": 5,
+            "circle-opacity": 0.95,
+            "circle-stroke-width": 1,
+            "circle-stroke-color": "rgba(255,255,255,0.35)",
+            "circle-color": toneColor,
+          },
+        });
+        PLACES.forEach((s) => {
+          const el = document.createElement("div");
+          el.className = "place-dot " + s.kind;
+          el.title = s.name;
+          new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([s.lon, s.lat]).addTo(map);
+        });
+        Promise.all(WAYS.map(async ([origin, dest]) => {
+          const a = byName(origin);
+          const b = byName(dest);
+          if (!a || !b) return null;
+          try {
+            const r = await fetch(
+              "https://router.project-osrm.org/route/v1/driving/" +
+                a.lon + "," + a.lat + ";" + b.lon + "," + b.lat +
+                "?overview=full&geometries=geojson"
+            );
+            const data = r.ok ? await r.json() : null;
+            const coords = data?.routes?.[0]?.geometry?.coordinates;
+            return { id: origin + "-" + dest, coords: Array.isArray(coords) && coords.length > 8 ? coords : straight(a, b) };
+          } catch {
+            return { id: origin + "-" + dest, coords: straight(a, b) };
+          }
+        })).then((rows) => {
+          corridors = rows.filter(Boolean);
+          setRoutes();
+          setDots(0);
+        });
+
+        let tick = 0;
+        if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          setInterval(() => { tick += 1; setDots(tick); }, 160);
+        }
+      });
+
+      resizeMap = () => map.resize();
+      new ResizeObserver(resizeMap).observe(root);
+      addEventListener("fullscreenchange", resizeMap);
+    })();
+  </script>
+</body>
+</html>

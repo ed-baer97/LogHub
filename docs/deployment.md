@@ -112,7 +112,9 @@ gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8000 --ti
 
 ## Публичная ссылка (демо)
 
-Туннель на порт 80:
+Кабинет: [https://caspianloghub.asia/](https://caspianloghub.asia/) — свой домен на Linux-хосте через Cloudflare. Хост выключили — сайт не открывается.
+
+Как поднимали туннель на порт 80:
 
 ```bash
 cloudflared tunnel --url http://localhost:80
