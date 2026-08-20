@@ -30,7 +30,7 @@ bash scripts/deploy-linux.sh
 | `postgres` | `postgres:16-alpine` | 127.0.0.1:5432 | user `caspian`, пароль из `.env`, volume `pgdata` |
 | `pgbouncer` | `edoburu/pgbouncer:v1.25.2-p0` | внутренний | transaction pool |
 | `redis` | `redis:7-alpine` | внутренний | pub/sub, кэш, ARQ |
-| `osrm` | `osrm/osrm-backend:v5.27.1` | внутренний | граф в `loghub_osrmdata`; без файла — sleep |
+| `osrm` | `ghcr.io/project-osrm/osrm-backend:v5.27.1` | внутренний | граф в `loghub_osrmdata`; без файла — sleep |
 | `migrate` | `backend/Dockerfile` | — | один раз `alembic upgrade head` в Postgres |
 | `backend`, `backend-2` | тот же image | внутренний 8000 | gunicorn, 2 UvicornWorker, `--timeout 120`, non-root |
 | `worker` | тот же image | — | follow, prune, downsample, prefetch, партиции |

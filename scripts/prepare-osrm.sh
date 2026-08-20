@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VOLUME="${OSRM_VOLUME:-loghub_osrmdata}"
-IMAGE="${OSRM_IMAGE:-osrm/osrm-backend:v5.27.1}"
+IMAGE="${OSRM_IMAGE:-ghcr.io/project-osrm/osrm-backend:v5.27.1}"
 PBF_URL="${OSRM_PBF_URL:-https://download.geofabrik.de/asia/kazakhstan-latest.osm.pbf}"
 
 docker volume create "$VOLUME" >/dev/null

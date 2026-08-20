@@ -83,7 +83,7 @@ services:
       retries: 10
 
   osrm:
-    image: osrm/osrm-backend:v5.27.1
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
     volumes:
       - osrmdata:/data
     command:

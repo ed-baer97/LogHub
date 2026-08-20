@@ -50,7 +50,7 @@
 - Аналитика: `SUM`/`COUNT`/`GROUP BY`, коридоры — топ-8 пар origin/dest в SQL.
 - Matching: сначала bbox ±0.85° вокруг origin/dest, затем прежний крюк по кандидатам.
 - ARQ: `prefetch_osrm` (KEY_PAIRS), `downsample_tracks` (1 точка/мин старше суток), плюс prune и follow.
-- OSRM в Compose (`osrm/osrm-backend`, volume `loghub_osrmdata`). Граф готовит `scripts/prepare-osrm.sh`. Пока файла нет — контейнер спит, API рисует прямую.
+- OSRM в Compose (`ghcr.io/project-osrm/osrm-backend:v5.27.1`, volume `loghub_osrmdata`). Граф готовит `scripts/prepare-osrm.sh`. Пока файла нет — контейнер спит, API рисует прямую.
 
 ## Этап 4 — реплики, PgBouncer, метрики, партиции
 
