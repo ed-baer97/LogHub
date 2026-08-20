@@ -6,13 +6,15 @@ import type { Settlement } from "../types";
 type Corridor = { id: string; origin: string; dest: string; coords: number[][] };
 
 const SHOW_PLACES = ["Актау", "Жанаозен", "Шетпе", "Бейнеу", "Форт-Шевченко", "Курык"];
-const FALLBACK_WAYS: [string, string[]][] = [
-  ["Актау-Жанаозен", ["Актау", "Жетыбай", "Мунайшы", "Жанаозен"]],
-  ["Актау-Шетпе", ["Актау", "Мангистау", "Шетпе"]],
-  ["Шетпе-Бейнеу", ["Шетпе", "Сай-Утес", "Боранкул", "Бейнеу"]],
-  ["Актау-Форт-Шевченко", ["Актау", "Умирзак", "Таушык", "Форт-Шевченко"]],
-  ["Актау-Курык", ["Актау", "Курык"]],
+const DEMO_WAYS: [string, string, string][] = [
+  ["Актау-Жанаозен", "Актау", "Жанаозен"],
+  ["Актау-Шетпе", "Актау", "Шетпе"],
+  ["Шетпе-Бейнеу", "Шетпе", "Бейнеу"],
+  ["Актау-Форт-Шевченко", "Актау", "Форт-Шевченко"],
+  ["Актау-Курык", "Актау", "Курык"],
+  ["Жанаозен-Шетпе", "Жанаозен", "Шетпе"],
 ];
+const OSRM_URL = "https://router.project-osrm.org";
 
 function byName(points: Settlement[], name: string) {
   return points.find((p) => p.name === name);
@@ -44,13 +46,37 @@ function along(coords: number[][], t: number): number[] {
   return coords[coords.length - 1];
 }
 
-function viaLine(points: Settlement[], names: string[]) {
-  const coords: number[][] = [];
-  names.forEach((n) => {
-    const p = byName(points, n);
-    if (p) coords.push([p.lon, p.lat]);
-  });
-  return coords;
+function looksLikeRoad(coords: number[][]) {
+  if (coords.length >= 32) return true;
+  if (coords.length < 8) return false;
+  const a = coords[0];
+  const b = coords[coords.length - 1];
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return false;
+  const step = Math.max(1, Math.floor(coords.length / 48));
+  for (let i = 1; i < coords.length - 1; i += step) {
+    const p = coords[i];
+    const t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+    const dist = Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+    if (dist > 0.008) return true;
+  }
+  return false;
+}
+
+async function fetchRoadLine(olon: number, olat: number, dlon: number, dlat: number): Promise<number[][] | null> {
+  try {
+    const r = await fetch(
+      `${OSRM_URL}/route/v1/driving/${olon},${olat};${dlon},${dlat}?overview=full&geometries=geojson`
+    );
+    if (!r.ok) return null;
+    const data = await r.json();
+    const coords = data?.routes?.[0]?.geometry?.coordinates;
+    return Array.isArray(coords) && looksLikeRoad(coords) ? coords : null;
+  } catch {
+    return null;
+  }
 }
 
 function onSectionLink(e: MouseEvent<HTMLAnchorElement>) {
@@ -75,6 +101,7 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
   const { theme, toggle } = useTheme();
   const [points, setPoints] = useState<Settlement[]>([]);
   const [roads, setRoads] = useState<Corridor[]>([]);
+  const [osrmRoads, setOsrmRoads] = useState<Corridor[]>([]);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -84,7 +111,7 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
       .catch(() => setPoints([]));
     fetch("/api/geo/corridors")
       .then((r) => (r.ok ? r.json() : []))
-      .then((rows: Corridor[]) => setRoads(rows))
+      .then((rows: Corridor[]) => setRoads(Array.isArray(rows) ? rows : []))
       .catch(() => setRoads([]));
   }, []);
 
@@ -93,13 +120,31 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
     return () => window.clearInterval(id);
   }, []);
 
-  const corridors = useMemo(() => {
-    if (roads.some((r) => r.coords.length > 2)) return roads;
-    return FALLBACK_WAYS.map(([id, names]) => {
-      const coords = viaLine(points, names);
-      return coords.length > 1 ? { id, origin: names[0], dest: names[names.length - 1], coords } : null;
-    }).filter((x): x is Corridor => Boolean(x));
+  useEffect(() => {
+    if (roads.some((r) => looksLikeRoad(r.coords))) return;
+    if (!points.length) return;
+    let cancelled = false;
+    Promise.all(
+      DEMO_WAYS.map(async ([id, origin, dest]) => {
+        const a = byName(points, origin);
+        const b = byName(points, dest);
+        if (!a || !b) return null;
+        const coords = await fetchRoadLine(a.lon, a.lat, b.lon, b.lat);
+        return coords ? { id, origin, dest, coords } : null;
+      })
+    ).then((rows) => {
+      if (cancelled) return;
+      setOsrmRoads(rows.filter((x): x is Corridor => Boolean(x)));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [roads, points]);
+
+  const corridors = useMemo(() => {
+    const fromApi = roads.filter((r) => looksLikeRoad(r.coords));
+    return fromApi.length ? fromApi : osrmRoads;
+  }, [roads, osrmRoads]);
 
   const routes = useMemo(
     () => corridors.map((c) => ({ id: c.id, coords: c.coords })),

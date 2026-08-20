@@ -28,6 +28,21 @@ def interpolate_line(lat1: float, lon1: float, lat2: float, lon2: float, n: int 
     ]
 
 
+def looks_like_road(coords: list[list[float]], min_dev_km: float = 0.4) -> bool:
+    """OSRM polyline leaves the origin–dest chord; a straight interpolation does not."""
+    if len(coords) >= 32:
+        return True
+    if len(coords) < 8:
+        return False
+    a_lon, a_lat = coords[0]
+    b_lon, b_lat = coords[-1]
+    step = max(1, len(coords) // 48)
+    for lon, lat in coords[1:-1:step]:
+        if point_to_segment_km(lat, lon, a_lat, a_lon, b_lat, b_lon) >= min_dev_km:
+            return True
+    return False
+
+
 def point_to_segment_km(
     lat: float, lon: float, alat: float, alon: float, blat: float, blon: float
 ) -> float:

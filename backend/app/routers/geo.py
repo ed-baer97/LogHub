@@ -1,3 +1,4 @@
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,8 +12,8 @@ from app.paging import page_params, paginate
 from app.roles import SENDER
 from app.schemas import CorridorOut, Page, SettlementCreate, SettlementOut, SettlementUpdate, VehicleOut
 from app.services.fleet import to_vehicle_out
-from app.services.geo import load_coords
-from app.services.osrm import get_cached_route
+from app.services.geo import load_coords, looks_like_road
+from app.services.osrm import ensure_road_route, get_cached_route
 
 DEMO_CORRIDORS = [
     ("Актау", "Жанаозен"),
@@ -42,21 +43,25 @@ def catalog(db: DbDep):
 
 @router.get("/corridors", response_model=list[CorridorOut])
 def corridors(db: DbDep):
-    """Демо-маршруты лендинга: геометрия из кэша OSRM, без операционных данных."""
+    """Демо-маршруты лендинга: геометрия по дорогам (OSRM), без операционных данных."""
     by_name = {
         s.name: s
         for s in db.query(Settlement).filter(Settlement.sender_id.is_(None)).all()
     }
+    testing = bool(os.getenv("TESTING"))
     out: list[CorridorOut] = []
     for a_name, b_name in DEMO_CORRIDORS:
         a, b = by_name.get(a_name), by_name.get(b_name)
         if not a or not b:
             continue
-        row = get_cached_route(db, a.id, b.id) or get_cached_route(db, b.id, a.id)
+        if testing:
+            row = get_cached_route(db, a.id, b.id) or get_cached_route(db, b.id, a.id)
+        else:
+            row = ensure_road_route(db, a, b)
         if not row:
             continue
         coords = load_coords(row.geometry)
-        if len(coords) < 2:
+        if not looks_like_road(coords):
             continue
         if row.origin_id != a.id:
             coords = list(reversed(coords))

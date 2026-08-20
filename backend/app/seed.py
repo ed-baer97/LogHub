@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth import hash_password
 from app.config import settings
 from app.models import HistoricalTrip, Order, RouteCache, Settlement, TrackPoint, User, Vehicle
-from app.services.geo import dump_coords, haversine_km, interpolate_line
+from app.services.geo import dump_coords, haversine_km, interpolate_line, load_coords, looks_like_road
 from app.services.osrm import fetch_osrm_route
 from app.services.pricing import price_model
 
@@ -73,21 +73,39 @@ KEY_PAIRS = [
 ]
 
 
-async def _cache_pair(db: Session, a: Settlement, b: Settlement) -> None:
+LANDING_PAIRS = [
+    ("Актау", "Жанаозен"),
+    ("Актау", "Шетпе"),
+    ("Шетпе", "Бейнеу"),
+    ("Актау", "Форт-Шевченко"),
+    ("Актау", "Курык"),
+    ("Жанаозен", "Шетпе"),
+]
+
+
+async def _cache_pair(db: Session, a: Settlement, b: Settlement, replace_straight: bool = False) -> None:
     existing = (
         db.query(RouteCache)
         .filter(RouteCache.origin_id == a.id, RouteCache.dest_id == b.id)
         .one_or_none()
     )
-    if existing:
+    if existing and not (replace_straight and not looks_like_road(load_coords(existing.geometry))):
         return
     fetched = await fetch_osrm_route(a.lon, a.lat, b.lon, b.lat)
     if fetched:
         dist, dur, geom = fetched["distance_km"], fetched["duration_s"], fetched["geometry"]
+    elif existing:
+        return
     else:
         air = haversine_km(a.lat, a.lon, b.lat, b.lon)
         dist, dur = air * 1.32, (air * 1.32 / 70) * 3600
         geom = interpolate_line(a.lat, a.lon, b.lat, b.lon, n=max(8, int(air / 12)))
+    if existing:
+        existing.distance_km = round(dist, 1)
+        existing.duration_s = dur
+        existing.geometry = dump_coords(geom)
+        db.commit()
+        return
     db.add(
         RouteCache(
             origin_id=a.id,
@@ -98,6 +116,17 @@ async def _cache_pair(db: Session, a: Settlement, b: Settlement) -> None:
         )
     )
     db.commit()
+
+
+async def ensure_landing_routes(db: Session) -> None:
+    by_name = {
+        s.name: s
+        for s in db.query(Settlement).filter(Settlement.sender_id.is_(None)).all()
+    }
+    for a_name, b_name in LANDING_PAIRS:
+        a, b = by_name.get(a_name), by_name.get(b_name)
+        if a and b:
+            await _cache_pair(db, a, b, replace_straight=True)
 
 
 def ensure_schema(db: Session) -> None:
@@ -167,6 +196,7 @@ async def seed_if_empty(db: Session) -> None:
     ensure_schema(db)
     if db.query(Settlement).count() > 0:
         ensure_superadmin(db)
+        await ensure_landing_routes(db)
         price_model.fit(db)
         return
 

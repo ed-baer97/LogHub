@@ -9,12 +9,25 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import RouteCache, Settlement
-from app.services.geo import dump_coords, haversine_km, interpolate_line, load_coords
+from app.services.geo import dump_coords, haversine_km, interpolate_line, load_coords, looks_like_road
 
 
-def _osrm_url(olon: float, olat: float, dlon: float, dlat: float) -> str:
+def _osrm_bases() -> list[str]:
+    bases: list[str] = []
+    for raw in (settings.osrm_url, settings.osrm_fallback_url):
+        url = (raw or "").strip().rstrip("/")
+        if url and url not in bases:
+            bases.append(url)
+    return bases
+
+
+def _timeout_for(base: str) -> float:
+    return 8.0 if base.startswith("https://") else 2.0
+
+
+def _osrm_url(base: str, olon: float, olat: float, dlon: float, dlat: float) -> str:
     return (
-        f"{settings.osrm_url}/route/v1/driving/"
+        f"{base}/route/v1/driving/"
         f"{olon},{olat};{dlon},{dlat}?overview=full&geometries=geojson"
     )
 
@@ -34,21 +47,35 @@ def _parse_osrm(data: dict[str, Any]) -> dict[str, Any] | None:
 async def fetch_osrm_route(olon: float, olat: float, dlon: float, dlat: float) -> dict[str, Any] | None:
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.get(_osrm_url(olon, olat, dlon, dlat))
-            r.raise_for_status()
-            return _parse_osrm(r.json())
+            for base in _osrm_bases():
+                try:
+                    r = await client.get(_osrm_url(base, olon, olat, dlon, dlat), timeout=_timeout_for(base))
+                    r.raise_for_status()
+                    parsed = _parse_osrm(r.json())
+                    if parsed:
+                        return parsed
+                except Exception:
+                    continue
     except Exception:
         return None
+    return None
 
 
 def fetch_osrm_route_sync(olon: float, olat: float, dlon: float, dlat: float) -> dict[str, Any] | None:
     try:
         with httpx.Client(timeout=8.0) as client:
-            r = client.get(_osrm_url(olon, olat, dlon, dlat))
-            r.raise_for_status()
-            return _parse_osrm(r.json())
+            for base in _osrm_bases():
+                try:
+                    r = client.get(_osrm_url(base, olon, olat, dlon, dlat), timeout=_timeout_for(base))
+                    r.raise_for_status()
+                    parsed = _parse_osrm(r.json())
+                    if parsed:
+                        return parsed
+                except Exception:
+                    continue
     except Exception:
         return None
+    return None
 
 
 def fallback_route(olat: float, olon: float, dlat: float, dlon: float) -> dict[str, Any]:
@@ -110,6 +137,31 @@ def ensure_route_sync(db: Session, origin: Settlement, dest: Settlement) -> Rout
 
 def route_coords(row: RouteCache) -> list[list[float]]:
     return load_coords(row.geometry)
+
+
+def _apply_fetched(db: Session, row: RouteCache, data: dict[str, Any]) -> RouteCache:
+    row.distance_km = round(data["distance_km"], 1)
+    row.duration_s = data["duration_s"]
+    row.geometry = dump_coords(data["geometry"])
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def ensure_road_route(db: Session, origin: Settlement, dest: Settlement) -> RouteCache | None:
+    """Return a road-following cache row, refreshing a straight-line fallback when OSRM answers."""
+    cached = get_cached_route(db, origin.id, dest.id)
+    if cached and looks_like_road(load_coords(cached.geometry)):
+        return cached
+    reverse = get_cached_route(db, dest.id, origin.id)
+    if reverse and looks_like_road(load_coords(reverse.geometry)):
+        return reverse
+    fetched = fetch_osrm_route_sync(origin.lon, origin.lat, dest.lon, dest.lat)
+    if not fetched:
+        return cached or reverse
+    if cached:
+        return _apply_fetched(db, cached, fetched)
+    return _store_route(db, origin, dest, fetched)
 
 
 async def prefetch_pair_matrix(db: Session, settlements: list[Settlement], pairs: list[tuple[int, int]]) -> None:
