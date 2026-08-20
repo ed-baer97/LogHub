@@ -28,7 +28,7 @@ bash scripts/deploy-linux.sh
 | Сервис | Образ / сборка | Порт | Заметки |
 |--------|----------------|------|---------|
 | `postgres` | `postgres:16-alpine` | 127.0.0.1:5432 | user `caspian`, пароль из `.env`, volume `pgdata` |
-| `pgbouncer` | `edoburu/pgbouncer` | внутренний | transaction pool |
+| `pgbouncer` | `edoburu/pgbouncer:v1.25.2-p0` | внутренний | transaction pool |
 | `redis` | `redis:7-alpine` | внутренний | pub/sub, кэш, ARQ |
 | `osrm` | `osrm/osrm-backend:v5.27.1` | внутренний | граф в `loghub_osrmdata`; без файла — sleep |
 | `migrate` | `backend/Dockerfile` | — | один раз `alembic upgrade head` в Postgres |

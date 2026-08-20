@@ -55,7 +55,7 @@ services:
       retries: 10
 
   pgbouncer:
-    image: edoburu/pgbouncer:1.23.1-p3
+    image: edoburu/pgbouncer:v1.25.2-p0
     environment:
       DATABASE_URL: postgres://caspian:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caspian
       AUTH_TYPE: scram-sha-256
