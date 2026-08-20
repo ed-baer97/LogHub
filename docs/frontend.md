@@ -1,8 +1,23 @@
 # Интерфейс
 
+4 / 10 · [← Жизненный цикл заявки](order-lifecycle.md) · [Оглавление](../README.md) · [Попутки и цена →](matching-and-pricing.md)
+
 SPA на React 18. Сборка Vite, карта MapLibre + OSM. Стили — `frontend/src/styles.css`, тема светлая/тёмная (`theme.tsx`).
 
 ## Маршруты
+
+```mermaid
+flowchart TD
+  Login["логин"] --> Role{"роль"}
+  Role -->|sender| Sender["/sender"]
+  Role -->|carrier| Carrier["/carrier"]
+  Role -->|driver| Driver["/driver"]
+  Role -->|staff| Disp["/dispatcher"]
+  Sender -->|чужой URL / выход| Land["/"]
+  Carrier --> Land
+  Driver --> Land
+  Disp --> Land
+```
 
 | Путь | Кто | Если чужой |
 |------|-----|------------|
@@ -23,7 +38,18 @@ SPA на React 18. Сборка Vite, карта MapLibre + OSM. Стили — 
 - Тосты: пароль новой учётки показывается один раз.
 - Карта (`MapView`): пункты, борт, polyline рейса, след. У отправителя на вкладке «Пункты» клик ставит координаты новой точки.
 
-Прокси dev: `/api` → `127.0.0.1:8000` (`vite.config.ts`). В Docker nginx проксирует `/api/` на две реплики API, gzip и лимит запросов; SSE без буфера.
+```mermaid
+sequenceDiagram
+  participant UI as SPA
+  participant API as /api
+  UI->>API: Bearer fetch / apiList
+  UI->>API: POST /tracking/ticket
+  API-->>UI: ticket
+  UI->>API: EventSource stream?ticket=
+  API-->>UI: hello, fleet, vehicle, order
+```
+
+nginx проксирует `/api/` на две реплики API, gzip и лимит запросов; SSE без буфера.
 
 ## Лендинг
 
@@ -57,7 +83,7 @@ SPA на React 18. Сборка Vite, карта MapLibre + OSM. Стили — 
 |--|-------------|--------|
 | Вкладки | Дашборд, Админы | Обзор, Пользователи |
 | Карта и live-парк | да | обзор без живых деталей флота |
-| Аналитика | полная (порожняк, топливо, коридоры) | урезанная |
+| Аналитика | полная (пустой пробег, топливо, коридоры) | урезанная |
 | Пользователи | только админы | отправители и перевозчики |
 | Рейсы | не запускает | не запускает |
 

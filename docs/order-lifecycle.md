@@ -1,10 +1,23 @@
 # Жизненный цикл заявки
 
+3 / 10 · [← Роли и доступ](roles-and-access.md) · [Оглавление](../README.md) · [Интерфейс →](frontend.md)
+
 ## Граф статусов
 
-```
-open → taken → assigned → arrived → loading → transit → delivered
-open / taken / assigned → cancelled
+```mermaid
+stateDiagram-v2
+  [*] --> open
+  open --> taken: take
+  taken --> assigned: assign
+  assigned --> arrived: arrive
+  arrived --> loading: start-loading
+  loading --> transit: start-route
+  transit --> delivered: complete-route / конец polyline
+  delivered --> [*]
+  open --> cancelled: cancel
+  taken --> cancelled: cancel
+  assigned --> cancelled: cancel
+  cancelled --> [*]
 ```
 
 В API статус в пути — `transit` (не `IN_TRANSIT`). Legacy-алиас `pickup` в коде приравнивается к погрузке.
@@ -12,6 +25,21 @@ open / taken / assigned → cancelled
 Пропускать этапы нельзя: `assigned` → `transit` даёт 409.
 
 ## Кто двигает статус
+
+```mermaid
+sequenceDiagram
+  actor Sender as Отправитель
+  actor Carrier as Перевозчик
+  actor Driver as Водитель
+  participant API as FastAPI
+  Sender->>API: POST /api/orders  open
+  Carrier->>API: POST /take  taken
+  Carrier->>API: POST /assign  assigned
+  Driver->>API: POST /arrive  arrived
+  Driver->>API: POST /start-loading  loading
+  Driver->>API: POST /start-route  transit + OSRM
+  Driver->>API: POST /complete-route  delivered
+```
 
 | Шаг | Кто | Эндпоинт / действие |
 |-----|-----|---------------------|
@@ -50,7 +78,7 @@ open / taken / assigned → cancelled
 
 ### `transit`
 
-OSRM polyline в память, борт в начало маршрута, статус борта `enroute`. Тик симулятора пишет след. Опционально GPS: `POST /api/tracking/ping`.
+OSRM polyline в Redis, борт в начало маршрута, статус борта `enroute`. Тик симулятора пишет след. Опционально GPS: `POST /api/tracking/ping`.
 
 `stop-route` снимает план движения, заявка остаётся `transit`, борт `enroute` без анимации.
 
@@ -64,6 +92,14 @@ OSRM polyline в память, борт в начало маршрута, ста
 
 ## Карта по этапам
 
+```mermaid
+flowchart LR
+  S1["open / taken"] --> M1["пункты, без живого борта"]
+  S2["assigned / arrived / loading"] --> M2["борт в точке, без polyline"]
+  S3["transit"] --> M3["polyline + движение / GPS"]
+  S4["delivered"] --> M4["рейс закрыт"]
+```
+
 | Статус | Что на карте |
 |--------|----------------|
 | `open` / `taken` | пункты, без живого борта у отправителя |
@@ -71,8 +107,4 @@ OSRM polyline в память, борт в начало маршрута, ста
 | `transit` | polyline + движение / GPS |
 | `delivered` | рейс закрыт |
 
-## Сценарий демо
-
-1. Отправитель: пункт (если нужен) → котировка → заявка.
-2. Перевозчик: борт → биржа → взять → «Рейсы» → назначить свободный борт.
-3. Водитель: прибыл → погрузка → выехать → (опционально GPS) → завершить.
+Цепочка с нуля — в [быстром старте](getting-started.md).

@@ -31,7 +31,7 @@ export default function OrderPanel({
       </div>
       {order.sender_name && <p className="lede">Отправитель: {order.sender_name}</p>}
       {order.empty_km_saved > 0 && (
-        <p className="lede">Экономия порожняка: {order.empty_km_saved} км</p>
+        <p className="lede">Экономия пустого пробега: {order.empty_km_saved} км</p>
       )}
       <div className="row-actions">
         <button

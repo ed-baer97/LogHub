@@ -1,24 +1,28 @@
 # Модель данных
 
-ORM — SQLAlchemy 2 (`backend/app/models.py`). Схема: Alembic (`backend/alembic/`). В pytest — `create_all`. `ensure_schema` подтягивает старые SQLite/Postgres.
+6 / 10 · [← Попутки и цена](matching-and-pricing.md) · [Оглавление](../README.md) · [HTTP API →](api.md)
+
+ORM — SQLAlchemy 2 (`backend/app/models.py`). Схема: Alembic (`backend/alembic/`). Pytest накатывает ту же схему на базу `caspian_test`. `ensure_schema` подтягивает старые Postgres.
 
 ## Диаграмма связей
 
+```mermaid
+erDiagram
+  User ||--o{ Vehicle : owner_id
+  User ||--o| Vehicle : driver_id
+  User ||--o{ User : carrier_id
+  User ||--o{ Order : sender_id
+  User ||--o{ Order : carrier_id
+  User ||--o{ Settlement : sender_id
+  Settlement ||--o{ Vehicle : home_id
+  Settlement ||--o{ Order : origin_id
+  Settlement ||--o{ Order : dest_id
+  Settlement ||--o{ RouteCache : origin_dest
+  Vehicle ||--o{ TrackPoint : trail
+  Vehicle ||--o| Order : current_order_id
 ```
-User 1 ──< Vehicle.owner_id          перевозчик владеет бортом
-User 1 ──< Vehicle.driver_id         водитель закреплён за одним бортом
-User 1 ──< User.carrier_id           водитель принадлежит перевозчику
-User 1 ──< Order.sender_id
-User 1 ──< Order.carrier_id
-User 1 ──< Settlement.sender_id      свои точки отправителя (NULL = каталог области)
 
-Settlement 1 ──< Vehicle.home_id
-Settlement 1 ──< Order.origin_id / dest_id
-Settlement ── RouteCache (origin_id, dest_id unique)
-
-Vehicle 1 ──< TrackPoint
-Vehicle ── Order.vehicle_id / Vehicle.current_order_id
-```
+`Settlement.sender_id` пустой — каталог области; задан — личная точка отправителя. Перевозчик владеет бортом (`owner_id`), водитель закреплён за одним бортом (`driver_id`) и принадлежит перевозчику (`users.carrier_id`).
 
 ## `users`
 
@@ -81,13 +85,13 @@ Vehicle ── Order.vehicle_id / Vehicle.current_order_id
 | `price_offered` / `price_recommended` | тенге |
 | `status` | см. [жизненный цикл](order-lifecycle.md) |
 | `distance_km` | по OSRM или fallback |
-| `empty_km_saved` | оценка экономии порожняка при назначении |
+| `empty_km_saved` | оценка экономии пустого пробега при назначении |
 | `is_backhaul` | true, если матчер нашёл попутку |
 | `taken_at`, `delivered_at` | метки |
 
 ## `track_points`
 
-След борта. `source`: `nav` (симулятор), `live` (ping водителя), `sim` (по умолчанию в модели). В Postgres таблица секционирована по месяцу `ts` (`PARTITION BY RANGE`); SQLite в тестах — обычная таблица. Индекс `(vehicle_id, ts)`.
+След борта. `source`: `nav` (симулятор), `live` (ping водителя), `sim` (по умолчанию в модели). Таблица секционирована по месяцу `ts` (`PARTITION BY RANGE`). Индекс `(vehicle_id, ts)`.
 
 ## `route_cache`
 
@@ -95,9 +99,19 @@ Vehicle ── Order.vehicle_id / Vehicle.current_order_id
 
 ## `historical_trips`
 
-Обучающая выборка для цены (км, вес, тип груза, цена, был ли порожний возврат). В текущем сиде таблица может оставаться пустой — тогда используются запасные коэффициенты. Доля порожняка в аналитике (`empty_share_history`) считается по этой таблице.
+Обучающая выборка для цены (км, вес, тип груза, цена, был ли возврат без груза). В текущем сиде таблица может оставаться пустой — тогда используются запасные коэффициенты. Доля пустого пробега в аналитике (`empty_share_history`) считается по этой таблице.
 
 ## Статусы борта vs заявки
+
+```mermaid
+stateDiagram-v2
+  [*] --> idle
+  idle --> assigned: assign
+  assigned --> loading: start-loading
+  loading --> enroute: start-route
+  enroute --> idle: delivered / cancel
+  assigned --> idle: cancel до arrived
+```
 
 | Заявка | Типичный `vehicles.status` |
 |--------|----------------------------|
@@ -105,3 +119,5 @@ Vehicle ── Order.vehicle_id / Vehicle.current_order_id
 | `loading` | `loading` |
 | `transit` | `enroute` |
 | нет рейса / `delivered` / `cancelled` | `idle` |
+
+Статусы заявки подробно — в [жизненном цикле](order-lifecycle.md).

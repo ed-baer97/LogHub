@@ -49,10 +49,12 @@ def test_sse_counter_open_close():
     assert sse_total() == before
 
 
-def test_ensure_partitions_noop_on_sqlite():
+def test_ensure_partitions_on_postgres():
     db = SessionLocal()
     try:
-        assert ensure_track_partitions(db) == []
+        created = ensure_track_partitions(db)
+        db.commit()
+        assert partition_name(date(2026, 8, 1)) == "track_points_2026_08"
+        assert isinstance(created, list)
     finally:
         db.close()
-    assert partition_name(date(2026, 8, 1)) == "track_points_2026_08"

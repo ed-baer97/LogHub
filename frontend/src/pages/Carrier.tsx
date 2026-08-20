@@ -339,7 +339,7 @@ function CarrierAnalytics({
         <h3 className="analytics-kicker">Перевозки</h3>
         <div className="metric-grid">
           <MetricCard name="С грузом" value={fmtNum(loadedKm)} unit="км" />
-          <MetricCard name="Порожняк сэкономлен" value={fmtNum(savedKm)} unit="км" />
+          <MetricCard name="Пустой пробег сэкономлен" value={fmtNum(savedKm)} unit="км" />
           <MetricCard name="Выручка" value={fmtNum(earned)} unit="₸" />
           <MetricCard name="Обратки" value={fmtNum(backhaul)} unit="рейсов" />
         </div>
@@ -493,7 +493,7 @@ function CarrierDash({
               <div className="stats eco">
                 <div className="stat">
                   <b>{savedKm.toFixed(0)}</b>
-                  <span>км порожняка</span>
+                  <span>км без груза</span>
                 </div>
                 <div className="stat">
                   <b>{savedFuel.toFixed(0)} л</b>

@@ -1,8 +1,21 @@
 # HTTP API
 
+7 / 10 · [← Модель данных](data-model.md) · [Оглавление](../README.md) · [Архитектура →](architecture.md)
+
 База: `/api`. Интерактивно: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
 Авторизация: заголовок `Authorization: Bearer <token>` (кроме login, demo, health, catalog, corridors). SSE: одноразовый `POST /api/tracking/ticket`, затем `GET /stream?ticket=…` (или Bearer в заголовке).
+
+```mermaid
+flowchart LR
+  Auth["/api/auth"] --> Admin["/api/admin"]
+  Auth --> Geo["/api/geo"]
+  Auth --> Orders["/api/orders"]
+  Auth --> Fleet["/api/fleet"]
+  Auth --> Track["/api/tracking"]
+  Auth --> An["/api/analytics"]
+  Track --> SSE["ticket → stream"]
+```
 
 Ответы ошибок FastAPI: `{"detail": "…"}`. Фронт показывает `detail` через `formatError`.
 
@@ -29,7 +42,7 @@
 ### `POST /api/auth/login`
 
 ```json
-{ "email": "superadmin@caspian.kz", "password": "demo" }
+{ "email": "superadmin@caspian.kz", "password": "<SUPERADMIN_PASSWORD>" }
 ```
 
 Ответ `TokenOut`: `{ "token": "…", "user": UserOut }`.
@@ -241,7 +254,6 @@ Cancel: статусы из `CANCELLABLE`. Delete: `{ "ok": true }`.
 | `POST /ticket` | любой залогиненный | одноразовый тикет SSE (TTL 60 с) |
 | `GET /stream` | тикет или Bearer | SSE |
 | `POST /arrive` | водитель | `assigned` → `arrived` |
-| `POST /arrive` | водитель | `assigned` → `arrived` |
 | `POST /start-loading` | водитель | `arrived` → `loading` |
 | `POST /start-route` | водитель | `loading` → `transit` + навигация |
 | `POST /complete-route` | водитель | `transit` → `delivered` |
@@ -257,9 +269,9 @@ Cancel: статусы из `CANCELLABLE`. Delete: `{ "ok": true }`.
 
 ### `GET /api/analytics/summary` — staff
 
-Счётчики пунктов, бортов, открытых / в пути / доставленных заявок, загруженные км, экономия порожняка и топлива, топ коридоров. Агрегаты в SQL. При Redis кэш ~45 с (ключи `analytics:summary:super` и `analytics:summary:staff`).
+Счётчики пунктов, бортов, открытых / в пути / доставленных заявок, загруженные км, экономия пустого пробега и топлива, топ коридоров. Агрегаты в SQL. При Redis кэш ~45 с (ключи `analytics:summary:super` и `analytics:summary:staff`).
 
-Константы: дизель **32 л / 100 км**, **295 ₸/л**, порожний пробег без платформы **40%**.
+Константы: дизель **32 л / 100 км**, **295 ₸/л**, пустой пробег без платформы **40%**.
 
 У админа (не супер-админ) из ответа убираются `empty_km_without_platform`, `empty_share_history`; `assumptions` пустой; `live_gps` = `null`.
 

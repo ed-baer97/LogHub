@@ -341,7 +341,7 @@ function Overview({
                 ) : (
                   <div className="eco-lines">
                     <div>
-                      <span>Порожняк</span>
+                      <span>Пустой пробег</span>
                       <b>{fmtNum(stats.empty_km_with_platform)} км</b>
                     </div>
                     {stats.empty_km_without_platform != null && (
@@ -366,7 +366,7 @@ function Overview({
                     )}
                     {stats.empty_share_history != null && (
                       <div>
-                        <span>Доля порожняка</span>
+                        <span>Доля пустого пробега</span>
                         <b>{fmtNum(stats.empty_share_history * 100, 1)}%</b>
                       </div>
                     )}
@@ -475,7 +475,7 @@ function AdminOverview({
                   delta={deltaLabel(stats.loaded_km_delta)}
                 />
                 <MetricCard
-                  name="Порожняк"
+                  name="Пустой пробег"
                   value={fmtNum(stats.empty_km_with_platform)}
                   unit="км"
                   delta={deltaLabel(stats.empty_km_delta)}
@@ -601,7 +601,7 @@ function AnalyticsPage({
   const kmBars = stats
     ? [
         { label: "С грузом", value: stats.loaded_km, tone: "sea" },
-        { label: "Порожняк", value: stats.empty_km_with_platform, tone: "dust" },
+        { label: "Пустой пробег", value: stats.empty_km_with_platform, tone: "dust" },
         ...(systemWide && without != null ? [{ label: "Без платформы", value: without, tone: "coral" }] : []),
       ]
     : [];
@@ -646,7 +646,7 @@ function AnalyticsPage({
                 delta={deltaLabel(stats.loaded_km_delta)}
               />
               <MetricCard
-                name="Порожняк"
+                name="Пустой пробег"
                 value={fmtNum(stats.empty_km_with_platform)}
                 unit="км"
                 delta={deltaLabel(stats.empty_km_delta)}
@@ -682,7 +682,7 @@ function AnalyticsPage({
               <div className="metric-grid">
                 {without != null && <MetricCard name="Без платформы" value={fmtNum(without)} unit="км" />}
                 <MetricCard name="Сэкономлено" value={fmtNum(stats.empty_km_saved)} unit="км" />
-                {share != null && <MetricCard name="Доля порожняка" value={fmtNum(share * 100, 1)} unit="%" />}
+                {share != null && <MetricCard name="Доля пустого пробега" value={fmtNum(share * 100, 1)} unit="%" />}
                 <MetricCard name="Автопарк" value={fmtNum(stats.vehicles)} unit="машин" />
                 <MetricCard name="Live GPS" value={fmtNum(live)} unit="бортов" />
                 <MetricCard name="Пункты" value={fmtNum(stats.settlements)} unit="точек" />
@@ -693,7 +693,7 @@ function AnalyticsPage({
                   {assumptions.diesel_l_per_100km != null ? ` ${assumptions.diesel_l_per_100km} л / 100 км` : ""}
                   {assumptions.diesel_kzt_per_l != null ? ` · ${fmtNum(assumptions.diesel_kzt_per_l)} ₸ / л` : ""}
                   {assumptions.empty_share_without != null
-                    ? ` · база порожняка ${fmtNum(assumptions.empty_share_without * 100)}%`
+                    ? ` · база пустого пробега ${fmtNum(assumptions.empty_share_without * 100)}%`
                     : ""}
                   .
                 </p>

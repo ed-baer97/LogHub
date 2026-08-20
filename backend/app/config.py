@@ -4,12 +4,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "sqlite:///./caspian.db"
-    secret_key: str = "caspian-hackathon-secret"
-    superadmin_password: str = "demo"
-    cors_origins: str = "http://localhost:5173,http://localhost:80,http://localhost,http://127.0.0.1:5173"
-    osrm_url: str = "https://router.project-osrm.org"
-    osrm_fallback_url: str = "https://router.project-osrm.org"
+    database_url: str = ""
+    secret_key: str = ""
+    superadmin_password: str = ""
+    cors_origins: str = "http://localhost,http://localhost:80,http://127.0.0.1"
+    osrm_url: str = "http://osrm:5000"
+    osrm_fallback_url: str = "http://osrm:5000"
     sim_speed_kmh: float = 420.0
     sim_tick_s: float = 1.5
     redis_url: str = ""

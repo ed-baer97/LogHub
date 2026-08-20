@@ -4,6 +4,7 @@ from app.access import event_visible
 from app.services.live import acquire_ping_slot, persist_track, set_position
 from app.database import SessionLocal
 from app.models import TrackPoint, Vehicle
+from app.services.redisutil import redis_enabled, sync_redis
 
 
 def test_event_visible_roles():
@@ -23,6 +24,8 @@ def test_event_visible_roles():
 
 
 def test_ping_slot_and_flush_interval(client):
+    assert redis_enabled()
+    assert sync_redis().ping() is True
     vid = 424242
     assert acquire_ping_slot(vid) is True
     assert acquire_ping_slot(vid) is False

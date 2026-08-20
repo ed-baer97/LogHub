@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password
@@ -104,7 +107,10 @@ async def _cache_pair(db: Session, a: Settlement, b: Settlement, replace_straigh
         existing.distance_km = round(dist, 1)
         existing.duration_s = dur
         existing.geometry = dump_coords(geom)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
         return
     db.add(
         RouteCache(
@@ -115,7 +121,10 @@ async def _cache_pair(db: Session, a: Settlement, b: Settlement, replace_straigh
             geometry=dump_coords(geom),
         )
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
 
 
 async def ensure_landing_routes(db: Session) -> None:
@@ -166,7 +175,7 @@ def ensure_superadmin(db: Session) -> User:
     if row:
         if row.role != "superadmin":
             row.role = "superadmin"
-        db.commit()
+            db.commit()
         return row
     row = User(
         email=SUPERADMIN_EMAIL,
@@ -177,9 +186,13 @@ def ensure_superadmin(db: Session) -> User:
         password_hash=hash_password(settings.superadmin_password),
     )
     db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    try:
+        db.commit()
+        db.refresh(row)
+        return row
+    except IntegrityError:
+        db.rollback()
+        return db.query(User).filter(User.email == SUPERADMIN_EMAIL).one()
 
 
 def wipe_except_superadmin(db: Session) -> None:
@@ -192,25 +205,60 @@ def wipe_except_superadmin(db: Session) -> None:
     ensure_superadmin(db)
 
 
-async def seed_if_empty(db: Session) -> None:
+def seed_catalog(db: Session) -> None:
+    """Settlements + superadmin. Safe to run from migrate and from many API workers."""
     ensure_schema(db)
-    if db.query(Settlement).count() > 0:
-        ensure_superadmin(db)
-        await ensure_landing_routes(db)
-        price_model.fit(db)
-        return
-
-    by_name: dict[str, Settlement] = {}
-    for s in SETTLEMENTS:
-        row = Settlement(**s)
-        db.add(row)
-        db.flush()
-        by_name[row.name] = row
-    db.commit()
-
+    existing = {
+        name
+        for (name,) in db.query(Settlement.name).filter(Settlement.sender_id.is_(None)).all()
+    }
+    for item in SETTLEMENTS:
+        if item["name"] not in existing:
+            db.add(Settlement(**item))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
     ensure_superadmin(db)
 
-    for a_name, b_name in KEY_PAIRS:
-        await _cache_pair(db, by_name[a_name], by_name[b_name])
 
+async def _seed_routes(db: Session) -> None:
+    by_name = {
+        s.name: s
+        for s in db.query(Settlement).filter(Settlement.sender_id.is_(None)).all()
+    }
+    for a_name, b_name in KEY_PAIRS:
+        a, b = by_name.get(a_name), by_name.get(b_name)
+        if a and b:
+            await _cache_pair(db, a, b)
+    await ensure_landing_routes(db)
     price_model.fit(db)
+
+
+async def seed_if_empty(db: Session) -> None:
+    from app.services.redisutil import sync_redis
+
+    r = sync_redis()
+    holder = bool(r.set("loghub:seed", "1", nx=True, ex=180)) if r is not None else True
+    if r is not None and not holder:
+        for _ in range(120):
+            await asyncio.sleep(0.5)
+            if not r.exists("loghub:seed"):
+                break
+    try:
+        seed_catalog(db)
+        await _seed_routes(db)
+    finally:
+        if holder and r is not None:
+            r.delete("loghub:seed")
+
+
+if __name__ == "__main__":
+    from app.database import SessionLocal, require_postgres
+
+    require_postgres()
+    _db = SessionLocal()
+    try:
+        seed_catalog(_db)
+    finally:
+        _db.close()

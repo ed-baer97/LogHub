@@ -5,18 +5,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal, require_postgres
 from app.routers import admin, analytics, auth, fleet, geo, orders, tracking
 from app.seed import seed_if_empty
 from app.services.cache import track_points_count
 from app.services.events import bus
 from app.services.metrics import RequestMetricsMiddleware, instance_id, prometheus_response
+from app.services.redisutil import require_redis
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if os.getenv("TESTING"):
-        Base.metadata.create_all(bind=engine)
+    require_postgres()
+    require_redis()
     await bus.start()
     if not os.getenv("TESTING"):
         db = SessionLocal()

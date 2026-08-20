@@ -14,8 +14,6 @@ dist/
 .vscode/
 frontend/dist/
 backend/.env
-backend/caspian.db
-*.db
 pgdata/
 backups/*.sql.gz
 backups/*.sql

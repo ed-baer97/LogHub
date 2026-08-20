@@ -907,7 +907,7 @@ function SenderAnalytics({ orders, loading }: { orders: Order[]; loading: boolea
         <h3 className="analytics-kicker">Перевозки</h3>
         <div className="metric-grid">
           <MetricCard name="С грузом" value={fmtNum(loadedKm)} unit="км" />
-          <MetricCard name="Порожняк сэкономлен" value={fmtNum(savedKm)} unit="км" />
+          <MetricCard name="Пустой пробег сэкономлен" value={fmtNum(savedKm)} unit="км" />
           <MetricCard name="Оплачено" value={fmtNum(spent)} unit="₸" />
           <MetricCard name="Обратки" value={fmtNum(backhaul)} unit="заявок" />
         </div>

@@ -2,7 +2,7 @@ x-backend-env: &backend-env
   DATABASE_URL: postgresql+psycopg://caspian:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@pgbouncer:5432/caspian
   SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
   SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?set SUPERADMIN_PASSWORD in .env}
-  CORS_ORIGINS: http://localhost,http://localhost:80,http://localhost:5173,http://127.0.0.1
+  CORS_ORIGINS: http://localhost,http://localhost:80,http://127.0.0.1
   REDIS_URL: redis://redis:6379/0
   OSRM_URL: http://osrm:5000
   WEB_CONCURRENCY: "2"
@@ -45,7 +45,7 @@ services:
       - -c
       - log_checkpoints=on
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -76,6 +76,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -99,12 +101,13 @@ services:
 
   migrate:
     build: ./backend
-    command: alembic upgrade head
+    command: sh -c "alembic upgrade head && python -m app.seed"
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://caspian:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caspian
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?set SUPERADMIN_PASSWORD in .env}
     restart: "no"
 
   backend:
@@ -161,14 +164,16 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - ./backups:/backups
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      while true; do
-        ts=$$(date +%Y%m%d-%H%M);
-        pg_dump -h postgres -U caspian caspian | gzip > /backups/caspian-$$ts.sql.gz;
-        ls -1t /backups/caspian-*.sql.gz 2>/dev/null | tail -n +8 | while read f; do rm -f "$$f"; done;
-        sleep 86400;
-      done
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          ts=$$(date +%Y%m%d-%H%M)
+          pg_dump -h postgres -U caspian caspian | gzip > /backups/caspian-$$ts.sql.gz
+          ls -1t /backups/caspian-*.sql.gz 2>/dev/null | tail -n +8 | while read f; do rm -f "$$f"; done
+          sleep 86400
+        done
     restart: unless-stopped
 
 volumes:

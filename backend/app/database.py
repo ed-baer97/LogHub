@@ -10,14 +10,21 @@ class Base(DeclarativeBase):
     pass
 
 
-_sqlite = settings.database_url.startswith("sqlite")
-connect_args: dict = {"check_same_thread": False} if _sqlite else {"prepare_threshold": None}
-engine_kw: dict = {"connect_args": connect_args, "pool_pre_ping": not _sqlite}
-if not _sqlite:
-    engine_kw["pool_size"] = settings.db_pool_size
-    engine_kw["max_overflow"] = settings.db_max_overflow
+def require_postgres(url: str | None = None) -> str:
+    raw = (url if url is not None else settings.database_url) or ""
+    if not raw.startswith("postgresql"):
+        raise RuntimeError("DATABASE_URL must be PostgreSQL")
+    return raw
 
-engine = create_engine(settings.database_url, **engine_kw)
+
+_url = require_postgres()
+engine = create_engine(
+    _url,
+    connect_args={"prepare_threshold": None},
+    pool_pre_ping=True,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from app.config import settings
@@ -9,7 +8,12 @@ _sync: Any = None
 
 
 def redis_enabled() -> bool:
-    return bool(settings.redis_url.strip()) and not os.getenv("TESTING")
+    return bool(settings.redis_url.strip())
+
+
+def require_redis() -> None:
+    if not redis_enabled():
+        raise RuntimeError("REDIS_URL is required")
 
 
 def sync_redis() -> Any | None:

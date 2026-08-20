@@ -122,7 +122,7 @@ def match_orders(
         fuel = saved * DIESEL_L_PER_100KM / 100.0
         money = fuel * DIESEL_KZT_PER_L
         if backhaul and near_end:
-            reason = "Обратная загрузка: вместо порожнего возврата машина везёт груз к базе"
+            reason = "Обратная загрузка: вместо возврата без груза машина везёт груз к базе"
         elif in_corridor:
             reason = "Попутный груз в коридоре маршрута, крюк в пределах нормы"
         else:
