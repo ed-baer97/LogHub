@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import MapView, { type NetworkDot } from "../components/MapView";
+import Logo from "../components/Logo";
 import { useTheme } from "../theme";
 import type { Settlement } from "../types";
 
@@ -203,7 +204,7 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
 
       <header className="land-nav">
         <a className="land-brand" href="#top" onClick={onSectionLink}>
-          <span className="land-mark" aria-hidden />
+          <Logo size={28} className="land-mark" />
           Caspian LogHub
         </a>
         <nav>
@@ -386,7 +387,10 @@ export default function Landing({ onOpenLogin }: { onOpenLogin: () => void }) {
           </div>
         </div>
       </section>
-      <footer className="land-foot">Caspian LogHub · Мангистау</footer>
+      <footer className="land-foot">
+        <Logo size={20} className="land-foot-mark" />
+        Caspian LogHub · Мангистау
+      </footer>
     </div>
   );
 }

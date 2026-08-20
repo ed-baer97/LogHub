@@ -5,6 +5,7 @@ import { useTheme } from "../theme";
 import type { Role, User } from "../types";
 import { useToast } from "./Toast";
 import { HeaderHintProvider, useHeaderHintValue } from "./headerHint";
+import Logo from "./Logo";
 
 const CABINET: Record<Role, string> = {
   sender: "/sender",
@@ -81,7 +82,7 @@ function LayoutInner({
       {!hideChrome && (
       <header className="topbar">
         <NavLink to={cabinet ?? "/"} className="brand">
-          <div className="mark" />
+          <Logo size={32} className="mark" />
           <h1>Caspian LogHub</h1>
           <span>Мангистау</span>
         </NavLink>
@@ -126,6 +127,7 @@ function LayoutInner({
             aria-labelledby="login-title"
             onClick={(e) => e.stopPropagation()}
           >
+            <Logo size={44} className="modal-logo" alt="Caspian LogHub" />
             <p className="kicker">Авторизация</p>
             <h2 id="login-title" className="display" style={{ fontSize: 28 }}>
               Вход в кабинет

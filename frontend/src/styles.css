@@ -115,14 +115,15 @@ button, input, select, textarea { font-family: inherit; }
 
 .brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
 }
 .brand .mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--sea), var(--mark-deep));
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: block;
+  flex: none;
   box-shadow: 0 0 0 4px rgba(46, 196, 182, 0.12);
 }
 .brand h1 {
@@ -1312,6 +1313,12 @@ td select { padding: 6px 8px; border-radius: 8px; font-size: 12px; }
   padding: 28px 26px 24px;
   box-shadow: var(--shadow);
 }
+.modal-logo {
+  display: block;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(20, 127, 120, 0.28);
+}
 
 .toasts {
   position: fixed;
@@ -1792,22 +1799,12 @@ button.card { width: 100%; font: inherit; }
   white-space: nowrap;
 }
 .land-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  background: linear-gradient(135deg, var(--sea), var(--mark-deep));
-  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: block;
   flex: none;
-}
-.land-mark::after {
-  content: "";
-  position: absolute;
-  left: 5px;
-  right: 5px;
-  bottom: 6px;
-  height: 2px;
-  border-radius: 99px;
-  background: rgba(255,255,255,0.8);
+  box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.16);
 }
 .land-nav nav {
   display: flex;
@@ -2083,6 +2080,14 @@ button.card { width: 100%; font: inherit; }
   padding: 28px 24px 40px;
   color: var(--muted);
   font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.land-foot-mark {
+  display: block;
+  flex: none;
+  border-radius: 6px;
 }
 html[data-theme="light"] .land-veil {
   background:
